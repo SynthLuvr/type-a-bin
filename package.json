@@ -18,7 +18,6 @@
   },
   "scripts": {
     "build": "tsc",
-    "build:dist": "tsc -p tsconfig.build.json",
     "format:arrows": "pnpm convert-to-arrow .",
     "format:biome": "pnpm biome format --write .",
     "format:braces": "pnpm strip-braces .",

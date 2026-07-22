@@ -115,19 +115,18 @@ the original `PATH`.
 
 ``` bash
 pnpm install
-pnpm build    # type-check with tsc
+pnpm build    # build to dist/
 pnpm test     # run unit tests
 ```
 
 ## Scripts
 
-| Script            | Description                               |
-|-------------------|-------------------------------------------|
-| `pnpm build`      | Type-check the project with `tsc`         |
-| `pnpm build:dist` | Build distributable output to `dist/`     |
-| `pnpm lint`       | Run all linters (biome, oxlint, ast-grep) |
-| `pnpm format`     | Run all formatters (auto-fix)             |
-| `pnpm test`       | Run unit tests                            |
+| Script        | Description                               |
+|---------------|-------------------------------------------|
+| `pnpm build`  | Build the project to `dist/`              |
+| `pnpm lint`   | Run all linters (biome, oxlint, ast-grep) |
+| `pnpm format` | Run all formatters (auto-fix)             |
+| `pnpm test`   | Run unit tests                            |
 
 ## Special Thanks
 

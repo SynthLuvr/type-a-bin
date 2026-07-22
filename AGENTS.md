@@ -92,6 +92,6 @@ formats all files 4. `biome check` — applies lint auto-fixes
 
 - Source code lives in `src/`
 - Tests live in `src/tests/` (filenames end in `.test.ts`)
-- TypeScript is type-check only (`noEmit: true`) — use `tsx` for dev
+- `pnpm build` emits compiled output to `dist/` — use `tsx` for dev
   execution
 - ESM only (`"type": "module"`)
