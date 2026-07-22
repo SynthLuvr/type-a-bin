@@ -115,12 +115,12 @@ pnpm test     # run unit tests
 
 ## Scripts
 
-| Script            | Description                               |
-|-------------------|-------------------------------------------|
-| `pnpm build`      | Type-check the project with `tsc`         |
-| `pnpm lint`       | Run all linters (biome, oxlint, ast-grep) |
-| `pnpm format`     | Run all formatters (auto-fix)             |
-| `pnpm test`       | Run unit tests                            |
+| Script        | Description                               |
+|---------------|-------------------------------------------|
+| `pnpm build`  | Type-check the project with `tsc`         |
+| `pnpm lint`   | Run all linters (biome, oxlint, ast-grep) |
+| `pnpm format` | Run all formatters (auto-fix)             |
+| `pnpm test`   | Run unit tests                            |
 
 ## Special Thanks
 
