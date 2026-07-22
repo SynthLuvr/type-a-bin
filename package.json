@@ -1,7 +1,7 @@
 {
   "name": "type-a-bin",
   "private": true,
-  "description": "Type-A-Bin",
+  "description": "Mock any executable binary for testing in Node.js",
   "type": "module",
   "packageManager": "pnpm@11.15.0",
   "engines": {

@@ -6,9 +6,8 @@
 
 ## 1. Project Overview
 
-A boilerplate repository that wires up a full, opinionated TypeScript
-toolchain so you can start writing code immediately without configuring
-anything.
+A library that mocks any executable binary by injecting a mock script
+into the `PATH`, built on a full, opinionated TypeScript toolchain.
 
 - **Type checking** — `tsc` in strict mode (no emit)
 - **Formatting** — Biome + ast-grep codemods
@@ -16,7 +15,7 @@ anything.
 - **Testing** — Vitest
 - **CI** — GitHub Actions (build → lint → test on every PR)
 
-The implementation is intentionally empty for now. and one test.
+The public API is the `mockBin()` function exported from `src/index.ts`.
 
 ## 2. Tech Stack
 
@@ -73,9 +72,10 @@ All three must pass with zero errors.
     │   └── workflows/
     │       └── ci.yml                        # build → lint → test on PR
     ├── src/
-    │   ├── index.ts                          # Trivial module (replace with your code)
+    │   ├── index.ts                          # Public exports
+    │   ├── mock-bin.ts                       # mockBin() implementation
     │   └── tests/
-    │       └── index.test.ts                 # Trivial test
+    │       └── mock-bin.test.ts              # Unit tests
     ├── .gitignore                            # node_modules, dist, *.js
     ├── .oxlintrc.json                        # Type-aware oxlint rules
     ├── AGENTS.md                             # Instructions for AI agents
