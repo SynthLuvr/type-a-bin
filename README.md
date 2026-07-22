@@ -98,20 +98,6 @@ directory.
 Returns `Promise<() => void>` — call the returned function to restore
 the original `PATH`.
 
-## Tech Stack
-
-| Tool                                                             | Purpose                            |
-|------------------------------------------------------------------|------------------------------------|
-| [pnpm](https://pnpm.io)                                          | Package manager                    |
-| [TypeScript](https://www.typescriptlang.org)                     | Type checking (`tsc --noEmit`)     |
-| [Biome](https://biomejs.dev)                                     | Primary formatter and linter       |
-| [oxlint](https://oxc.rs/docs/guide/usage/linter)                 | Secondary type-aware linter        |
-| [ast-grep](https://ast-grep.github.io)                           | Structural lint/format rules       |
-| [convert-to-arrow](https://github.com/chimurai/convert-to-arrow) | Codemod: `function` → arrow consts |
-| [Vitest](https://vitest.dev)                                     | Test runner (unit + integration)   |
-| [tsx](https://github.com/privatenumber/tsx)                      | Dev-time TypeScript execution      |
-| [pandoc](https://pandoc.org)                                     | Markdown formatter (GFM)           |
-
 ## Prerequisites
 
 - [Node.js](https://nodejs.org) 26 and [pnpm](https://pnpm.io) (enforced
@@ -135,36 +121,9 @@ pnpm test     # run unit tests
 | `pnpm lint`       | Run all linters (biome, oxlint, ast-grep) |
 | `pnpm format`     | Run all formatters (auto-fix)             |
 | `pnpm test`       | Run unit tests                            |
-| `pnpm test:watch` | Watch mode                                |
-
-## Coding Conventions
-
-These are **enforced** by the toolchain, not just preferences:
-
-- **Arrow functions only** — no `function` declarations
-- **Separate exports** — no inline `export` keywords
-- **Double quotes**, 2-space indent, 80-char width, trailing commas,
-  semicolons (Biome)
-- **ESM only** (`"type": "module"`)
 
 ## Special Thanks
 
 This project was inspired by and is a Node.js equivalent of
 [mock-bin](https://github.com/stevemao/mock-bin) by [Steve
 Mao](https://github.com/stevemao).
-
-## Project Structure
-
-``` text
-├── .ast-grep/rules/       # Structural lint/format rules
-├── .github/workflows/     # CI
-├── scripts/               # Tooling scripts (pandoc-md)
-├── src/
-│   ├── index.ts           # Public exports
-│   ├── mock-bin.ts        # mockBin implementation
-│   └── tests/             # Unit tests
-├── biome.json             # Biome formatter + linter config
-├── package.json           # Dependencies, scripts, engine constraints
-├── tsconfig.json          # TypeScript config
-└── vitest.config.ts       # Test config
-```
