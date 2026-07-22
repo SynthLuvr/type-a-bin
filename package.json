@@ -20,7 +20,7 @@
     "prebuild:clean": "pnpm del -rf dist",
     "prebuild": "pnpm npm-run-all prebuild:clean",
     "build": "pnpm tsc",
-    "postbuild:clean": "pnpm del -rf dist/tests dist/vitest*",
+    "postbuild:clean": "pnpm del -rf dist/tests",
     "postbuild": "pnpm npm-run-all postbuild:clean",
     "format:arrows": "pnpm convert-to-arrow .",
     "format:biome": "pnpm biome format --write .",
