@@ -1,0 +1,42 @@
+{
+  "name": "type-a-bin",
+  "private": true,
+  "description": "Type-A-Bin",
+  "type": "module",
+  "packageManager": "pnpm@11.15.0",
+  "engines": {
+    "node": "==26"
+  },
+  "scripts": {
+    "build": "tsc",
+    "format:arrows": "pnpm convert-to-arrow .",
+    "format:biome": "pnpm biome format --write .",
+    "format:braces": "pnpm strip-braces .",
+    "format:check": "pnpm biome check --write .",
+    "format": "npm-run-all format:arrows format:braces format:biome format:check format:md",
+    "lint:biome": "pnpm biome check .",
+    "lint:oxlint": "pnpm oxlint .",
+    "lint": "npm-run-all lint:biome lint:oxlint lint:exports lint:functions lint:file-comment lint:md",
+    "strip-braces": "pnpm exec sg scan --rule .ast-grep/rules/strip-braces.yml -U",
+    "lint:exports": "pnpm exec sg scan --rule .ast-grep/rules/no-inline-export.yml --error=no-inline-export --globs '!**/*.d.ts' .",
+    "lint:functions": "pnpm exec sg scan --rule .ast-grep/rules/no-function-declaration.yml --error=no-function-declaration --globs '!**/*.d.ts' .",
+    "lint:file-comment": "pnpm exec sg scan --rule .ast-grep/rules/no-file-comment.yml --error=no-file-comment --globs '!**/*.d.ts' .",
+    "lint:md": "tsx scripts/pandoc-md.mts --check",
+    "format:md": "tsx scripts/pandoc-md.mts --write",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@ast-grep/cli": "^0.44.1",
+    "@ast-grep/cli-linux-x64-gnu": "^0.44.1",
+    "@biomejs/biome": "^2.5.4",
+    "@types/node": "^26.1.1",
+    "convert-to-arrow": "^1.1.4",
+    "npm-run-all2": "^9.0.2",
+    "oxlint": "^1.74.0",
+    "oxlint-tsgolint": "^0.25.0",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
