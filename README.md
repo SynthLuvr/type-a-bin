@@ -9,6 +9,12 @@ executable binary by injecting a mock script into your `PATH`.
 This is a Node.js alternative to the npm package
 [mock-bin](https://github.com/stevemao/mock-bin).
 
+## Installation
+
+``` bash
+pnpm add -D github:SynthLuvr/type-a-bin
+```
+
 ## Usage
 
 ### Basic Usage - Mock All Commands
@@ -109,7 +115,7 @@ the original `PATH`.
 
 ``` bash
 pnpm install
-pnpm build    # type-check with tsc
+pnpm build    # build to dist/
 pnpm test     # run unit tests
 ```
 
@@ -117,7 +123,7 @@ pnpm test     # run unit tests
 
 | Script        | Description                               |
 |---------------|-------------------------------------------|
-| `pnpm build`  | Type-check the project with `tsc`         |
+| `pnpm build`  | Build the project to `dist/`              |
 | `pnpm lint`   | Run all linters (biome, oxlint, ast-grep) |
 | `pnpm format` | Run all formatters (auto-fix)             |
 | `pnpm test`   | Run unit tests                            |

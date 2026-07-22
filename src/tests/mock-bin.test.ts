@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { mockBin } from "../mock-bin";
+import { mockBin } from "../mock-bin.js";
 
 describe("mockBin", () => {
   it("mock and unmock git", async () => {

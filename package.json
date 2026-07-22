@@ -3,12 +3,25 @@
   "private": true,
   "description": "Mock any executable binary for testing in Node.js",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
   "packageManager": "pnpm@11.15.0",
   "engines": {
     "node": "==26"
   },
   "scripts": {
-    "build": "tsc",
+    "prebuild:clean": "pnpm del -rf dist",
+    "prebuild": "pnpm npm-run-all prebuild:clean",
+    "build": "pnpm tsc",
+    "postbuild:clean": "pnpm del -rf dist/tests",
+    "postbuild": "pnpm npm-run-all postbuild:clean",
     "format:arrows": "pnpm convert-to-arrow .",
     "format:biome": "pnpm biome format --write .",
     "format:braces": "pnpm strip-braces .",
@@ -32,6 +45,7 @@
     "@biomejs/biome": "^2.5.4",
     "@types/node": "^26.1.1",
     "convert-to-arrow": "^1.1.4",
+    "del-cli": "^7.0.0",
     "npm-run-all2": "^9.0.2",
     "oxlint": "^1.74.0",
     "oxlint-tsgolint": "^0.25.0",
