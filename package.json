@@ -17,7 +17,7 @@
     "node": "==26"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').rmSync('dist/tests',{recursive:true,force:true})\"",
     "format:arrows": "pnpm convert-to-arrow .",
     "format:biome": "pnpm biome format --write .",
     "format:braces": "pnpm strip-braces .",
