@@ -12,8 +12,10 @@ This is a Node.js alternative to the npm package
 ## Installation
 
 ``` bash
-pnpm add -D github:SynthLuvr/type-a-bin
+pnpm add -D github:SynthLuvr/type-a-bin#dist
 ```
+
+> `dist` is published to the `dist` branch automatically on merge.
 
 ## Usage
 
