@@ -97,14 +97,32 @@ Creates a mock executable and prepends it to `PATH`. Returns a cleanup
 function that restores the original `PATH` and removes the temp
 directory.
 
-| Parameter         | Type                      | Description                                           |
-|-------------------|---------------------------|-------------------------------------------------------|
-| `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` and `pattern` |
-| `shebang`         | `string`                  | Interpreter (e.g., `"bash"`, `"node"`)                |
-| `code`            | `string`                  | Script code to execute when the mock runs             |
+| Parameter         | Type                      | Description                                              |
+|-------------------|---------------------------|----------------------------------------------------------|
+| `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` and `pattern`    |
+| `shebang`         | `string`                  | Interpreter (e.g., `"bash"`, `"node"`)                   |
+| `code`            | `string`                  | Script code, or a `{ file }` object pointing at a script |
 
 Returns `Promise<() => void>` — call the returned function to restore
 the original `PATH`.
+
+### Script file variant
+
+Instead of inlining script code as a string, pass a `{ file }` object as
+the third argument to point `mockBin` at a script on disk. The file
+keeps its own extension, so extension-aware loaders work — for example
+`node --import tsx` only transforms `.ts`/`.tsx` files, and the mock
+binary is itself written to an extensionless temp file:
+
+``` ts
+import { mockBin } from "type-a-bin";
+
+const cleanup = await mockBin("dragon", "node --import tsx", {
+  file: "./src/tests/hoard-script.ts",
+});
+
+cleanup();
+```
 
 ## Prerequisites
 

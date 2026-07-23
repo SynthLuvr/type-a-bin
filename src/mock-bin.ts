@@ -12,6 +12,21 @@ interface MockBinConfig {
   pattern?: string;
 }
 
+interface MockBinScriptFile {
+  /**
+   * Path to a script file whose content is executed when the mock binary
+   * runs.
+   *
+   * Unlike passing `code` as a raw string, the file keeps its real path
+   * and extension on disk. This matters for interpreters that select a
+   * language loader by extension — for example `node --import tsx` only
+   * transforms `.ts`/`.tsx` files, so pointing at a `.ts` file works
+   * while embedding the same source as a raw string does not (the mock
+   * binary is written to an extensionless temp file).
+   */
+  file: string;
+}
+
 /**
  * Finds the path to a binary within the given PATH directories.
  *
@@ -44,12 +59,16 @@ const findBinaryInPath = async (
  * original command, enabling conditional mocking where some subcommands
  * are mocked while others pass through to the real binary.
  *
- * There are two calling conventions:
+ * There are three calling conventions:
  *
  * 1. **Output shorthand** — pass the plain text the mock should print.
  *    The interpreter defaults to `bash` and the output is echoed.
  * 2. **Full script** — pass an interpreter (`shebang`) and arbitrary
  *    script `code` to run when the mock binary is invoked.
+ * 3. **Script file** — pass an interpreter (`shebang`) and a
+ *    `{ file }` object pointing at a script on disk. The file keeps its
+ *    own extension, so extension-aware loaders work (e.g.
+ *    `node --import tsx` with a `.ts` file).
  *
  * @param binNameOrConfig - Binary name or a config object with `binName`
  *   and an optional `pattern`
@@ -68,6 +87,14 @@ const findBinaryInPath = async (
  * // ... run your tests ...
  * cleanup() // Restore original PATH
  * ```
+ *
+ * @example
+ * ```ts
+ * // Script file (keeps its extension, so tsx transforms it)
+ * const cleanup = await mockBin("dragon", "node --import tsx", {
+ *   file: "./src/tests/hoard-script.ts",
+ * })
+ * ```
  */
 function mockBin(
   binNameOrConfig: string | MockBinConfig,
@@ -78,25 +105,21 @@ function mockBin(
   shebang: string,
   code: string,
 ): Promise<MockBinCleanup>;
+function mockBin(
+  binNameOrConfig: string | MockBinConfig,
+  shebang: string,
+  script: MockBinScriptFile,
+): Promise<MockBinCleanup>;
 async function mockBin(
   binNameOrConfig: string | MockBinConfig,
   shebangOrOutput: string,
-  code?: string,
+  codeOrScript?: string | MockBinScriptFile,
 ): Promise<MockBinCleanup> {
   const config =
     typeof binNameOrConfig === "string"
       ? { binName: binNameOrConfig }
       : binNameOrConfig;
   const { binName, pattern } = config;
-
-  // When only two arguments are supplied the second one is the output to
-  // print; wrap it in an echo and default to a bash interpreter.
-  const shebang = code === undefined ? "bash" : shebangOrOutput;
-  const scriptCode = code ?? `echo "${shebangOrOutput}"`;
-
-  const normalizedShebang = shebang.startsWith("#!")
-    ? shebang
-    : `#!/usr/bin/env ${shebang}`;
 
   const originalPath = process.env.PATH ?? "";
   const pathSeparator = process.platform === "win32" ? ";" : ":";
@@ -129,7 +152,46 @@ fi
   await writeFile(runOriginalBinaryPath, runOriginalScript);
   await chmod(runOriginalBinaryPath, 0o755);
 
-  // When a pattern is given, wrap the user code so only matching commands
+  // Resolve the shebang line and body of the mock binary.
+  let topShebang: string;
+  let body: string;
+
+  if (codeOrScript !== undefined && typeof codeOrScript === "object") {
+    // Script-file variant: the mock binary is a tiny shell wrapper that
+    // delegates to the interpreter. The script keeps its real path and
+    // extension so extension-aware loaders (e.g. tsx) parse it.
+    const scriptFile = codeOrScript;
+    const resolvedFile = path.resolve(scriptFile.file);
+
+    try {
+      const fileStats = await stat(resolvedFile);
+      if (!fileStats.isFile()) throw new Error("not a regular file");
+    } catch {
+      throw new Error(`mockBin: script file not found: ${scriptFile.file}`);
+    }
+
+    // Allow either a bare interpreter ("node --import tsx") or a full
+    // shebang line ("#!/usr/bin/env node"); strip a leading "#!" so the
+    // exec line stays valid.
+    const interpreter = shebangOrOutput.startsWith("#!")
+      ? shebangOrOutput.slice(2).trim()
+      : shebangOrOutput;
+
+    topShebang = "#!/bin/sh";
+    body = `exec ${interpreter} "${resolvedFile}" "$@"`;
+  } else {
+    // Inline variants. With only two arguments the second one is the
+    // output to print; wrap it in an echo and default to bash.
+    const shebang = codeOrScript === undefined ? "bash" : shebangOrOutput;
+    const scriptCode = codeOrScript ?? `echo "${shebangOrOutput}"`;
+
+    topShebang = shebang.startsWith("#!")
+      ? shebang
+      : `#!/usr/bin/env ${shebang}`;
+    body = scriptCode;
+  }
+
+  // When a pattern is given, wrap the body so only matching commands
   // are mocked; everything else is delegated to the real binary.
   let userScriptContent: string;
   if (pattern) {
@@ -138,21 +200,21 @@ fi
       .filter((p) => p && !p.includes("mock-bin-"));
     const realBinaryPath = await findBinaryInPath(binName, pathsWithoutTemp);
 
-    userScriptContent = `${normalizedShebang}
+    userScriptContent = `${topShebang}
 # Construct the full command with arguments
 FULL_COMMAND="${binName} $*"
 
 # Check if the command matches the pattern
 if echo "$FULL_COMMAND" | grep -qE '${pattern}'; then
   # Pattern matches - execute mock code
-${scriptCode}
+${body}
 else
   # Pattern doesn't match - execute the real binary
   ${realBinaryPath ? `exec "${realBinaryPath}" "$@"` : `echo "Error: Real binary '${binName}' not found in PATH" >&2; exit 127`}
 fi
 `;
   } else {
-    userScriptContent = `${normalizedShebang}\n${scriptCode}\n`;
+    userScriptContent = `${topShebang}\n${body}\n`;
   }
 
   // Write the mock script directly to the binary path so it replaces the
@@ -179,4 +241,9 @@ fi
   };
 }
 
-export { type MockBinCleanup, type MockBinConfig, mockBin };
+export {
+  type MockBinCleanup,
+  type MockBinConfig,
+  type MockBinScriptFile,
+  mockBin,
+};
