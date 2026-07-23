@@ -5,6 +5,28 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { mockBin } from "../mock-bin.js";
 
+/** Creates a temp script file, mocks `testbin` to run it, returns stdout. */
+const runScriptFile = async (options: {
+  content: string;
+  extension: string;
+  shebang: string;
+  args?: string[];
+}): Promise<string> => {
+  const dir = await mkdtemp(path.join(tmpdir(), "mockbin-"));
+  const scriptPath = path.join(dir, `mock.${options.extension}`);
+  await writeFile(scriptPath, options.content);
+
+  const cleanup = await mockBin("testbin", options.shebang, {
+    file: scriptPath,
+  });
+  const result = spawnSync("testbin", options.args ?? [], {
+    encoding: "utf-8",
+  });
+  cleanup();
+  await rm(dir, { recursive: true, force: true });
+  return result.stdout;
+};
+
 describe("mockBin", () => {
   it("mock and unmock git", async () => {
     const log = "mocking git!";
@@ -382,53 +404,34 @@ describe("mockBin", () => {
   });
 
   it("mock with a script file (node)", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "mockbin-file-"));
-    const scriptPath = path.join(dir, "mock.js");
-    await writeFile(scriptPath, 'console.log("hello from file")');
-
-    const cleanup = await mockBin("testbin", "node", { file: scriptPath });
-
-    const result = spawnSync("testbin", { encoding: "utf-8" });
-
-    expect(result.stdout).toBe("hello from file\n");
-
-    cleanup();
-    await rm(dir, { recursive: true, force: true });
+    expect(
+      await runScriptFile({
+        content: 'console.log("hello from file")',
+        extension: "js",
+        shebang: "node",
+      }),
+    ).toBe("hello from file\n");
   });
 
   it("mock with a TypeScript script file via node --import tsx", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "mockbin-ts-"));
-    const scriptPath = path.join(dir, "mock.ts");
-    await writeFile(
-      scriptPath,
-      'const value: number = 42; console.log("ts value " + value);',
-    );
-
-    const cleanup = await mockBin("testbin", "node --import tsx", {
-      file: scriptPath,
-    });
-
-    const result = spawnSync("testbin", { encoding: "utf-8" });
-
-    expect(result.stdout).toBe("ts value 42\n");
-
-    cleanup();
-    await rm(dir, { recursive: true, force: true });
+    expect(
+      await runScriptFile({
+        content: 'const value: number = 42; console.log("ts value " + value);',
+        extension: "ts",
+        shebang: "node --import tsx",
+      }),
+    ).toBe("ts value 42\n");
   });
 
   it("mock with a bash script file", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "mockbin-bash-"));
-    const scriptPath = path.join(dir, "mock.sh");
-    await writeFile(scriptPath, 'echo "from bash file $1"');
-
-    const cleanup = await mockBin("testbin", "bash", { file: scriptPath });
-
-    const result = spawnSync("testbin", ["arg"], { encoding: "utf-8" });
-
-    expect(result.stdout).toBe("from bash file arg\n");
-
-    cleanup();
-    await rm(dir, { recursive: true, force: true });
+    expect(
+      await runScriptFile({
+        content: 'echo "from bash file $1"',
+        extension: "sh",
+        shebang: "bash",
+        args: ["arg"],
+      }),
+    ).toBe("from bash file arg\n");
   });
 
   it("script file with pattern mocks matching commands only", async () => {

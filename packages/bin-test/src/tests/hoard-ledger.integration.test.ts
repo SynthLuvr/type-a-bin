@@ -18,7 +18,7 @@ const hoardRow = type({
 
 type HoardRow = typeof hoardRow.infer;
 
-// The mock runs \`node --import tsx\` against this script. Keeping it as a
+// The mock runs `node --import tsx` against this script. Keeping it as a
 // real .ts file means tsx transforms it (the mock binary itself is an
 // extensionless temp file, which tsx cannot parse). The DB path and
 // dragon name are passed through the environment.

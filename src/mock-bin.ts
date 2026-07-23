@@ -14,15 +14,10 @@ interface MockBinConfig {
 
 interface MockBinScriptFile {
   /**
-   * Path to a script file whose content is executed when the mock binary
-   * runs.
-   *
-   * Unlike passing `code` as a raw string, the file keeps its real path
-   * and extension on disk. This matters for interpreters that select a
-   * language loader by extension — for example `node --import tsx` only
-   * transforms `.ts`/`.tsx` files, so pointing at a `.ts` file works
-   * while embedding the same source as a raw string does not (the mock
-   * binary is written to an extensionless temp file).
+   * Script executed when the mock runs. The file keeps its real
+   * extension, so extension-aware loaders (e.g. `node --import tsx`)
+   * parse it — embedding the source inline fails because the mock
+   * binary is written to an extensionless temp file.
    */
   file: string;
 }
@@ -50,6 +45,53 @@ const findBinaryInPath = async (
     }
   }
   return null;
+};
+
+type ResolvedScript = { shebang: string; body: string };
+
+/** Wraps a bare interpreter in a `#!/usr/bin/env …` shebang line. */
+const toShebangLine = (interpreter: string): string =>
+  interpreter.startsWith("#!") ? interpreter : `#!/usr/bin/env ${interpreter}`;
+
+/**
+ * Validates the script file exists, then builds an `exec` wrapper that
+ * delegates to it through the given interpreter. The file keeps its real
+ * extension so extension-aware loaders (e.g. tsx) parse it.
+ */
+const resolveScriptFile = async (
+  shebang: string,
+  { file }: MockBinScriptFile,
+): Promise<ResolvedScript> => {
+  const resolvedFile = path.resolve(file);
+
+  const stats = await stat(resolvedFile).catch(() => null);
+  if (!stats?.isFile()) {
+    throw new Error(`mockBin: script file not found: ${file}`);
+  }
+
+  // Accept either a bare interpreter ("node --import tsx") or a full
+  // shebang line ("#!/usr/bin/env node"); strip "#!" for the exec line.
+  const interpreter = shebang.startsWith("#!")
+    ? shebang.slice(2).trim()
+    : shebang;
+
+  return {
+    shebang: "#!/bin/sh",
+    body: `exec ${interpreter} "${resolvedFile}" "$@"`,
+  };
+};
+
+/**
+ * Resolves the shebang and body for inline code or the output shorthand.
+ * With no `code`, `shebangOrOutput` is echoed via bash.
+ */
+const resolveInlineCode = (
+  shebangOrOutput: string,
+  code?: string,
+): ResolvedScript => {
+  const shebang = code === undefined ? "bash" : shebangOrOutput;
+  const body = code ?? `echo "${shebangOrOutput}"`;
+  return { shebang: toShebangLine(shebang), body };
 };
 
 /**
@@ -152,44 +194,10 @@ fi
   await writeFile(runOriginalBinaryPath, runOriginalScript);
   await chmod(runOriginalBinaryPath, 0o755);
 
-  // Resolve the shebang line and body of the mock binary.
-  let topShebang: string;
-  let body: string;
-
-  if (codeOrScript !== undefined && typeof codeOrScript === "object") {
-    // Script-file variant: the mock binary is a tiny shell wrapper that
-    // delegates to the interpreter. The script keeps its real path and
-    // extension so extension-aware loaders (e.g. tsx) parse it.
-    const scriptFile = codeOrScript;
-    const resolvedFile = path.resolve(scriptFile.file);
-
-    try {
-      const fileStats = await stat(resolvedFile);
-      if (!fileStats.isFile()) throw new Error("not a regular file");
-    } catch {
-      throw new Error(`mockBin: script file not found: ${scriptFile.file}`);
-    }
-
-    // Allow either a bare interpreter ("node --import tsx") or a full
-    // shebang line ("#!/usr/bin/env node"); strip a leading "#!" so the
-    // exec line stays valid.
-    const interpreter = shebangOrOutput.startsWith("#!")
-      ? shebangOrOutput.slice(2).trim()
-      : shebangOrOutput;
-
-    topShebang = "#!/bin/sh";
-    body = `exec ${interpreter} "${resolvedFile}" "$@"`;
-  } else {
-    // Inline variants. With only two arguments the second one is the
-    // output to print; wrap it in an echo and default to bash.
-    const shebang = codeOrScript === undefined ? "bash" : shebangOrOutput;
-    const scriptCode = codeOrScript ?? `echo "${shebangOrOutput}"`;
-
-    topShebang = shebang.startsWith("#!")
-      ? shebang
-      : `#!/usr/bin/env ${shebang}`;
-    body = scriptCode;
-  }
+  const { shebang, body } =
+    typeof codeOrScript === "object"
+      ? await resolveScriptFile(shebangOrOutput, codeOrScript)
+      : resolveInlineCode(shebangOrOutput, codeOrScript);
 
   // When a pattern is given, wrap the body so only matching commands
   // are mocked; everything else is delegated to the real binary.
@@ -200,7 +208,7 @@ fi
       .filter((p) => p && !p.includes("mock-bin-"));
     const realBinaryPath = await findBinaryInPath(binName, pathsWithoutTemp);
 
-    userScriptContent = `${topShebang}
+    userScriptContent = `${shebang}
 # Construct the full command with arguments
 FULL_COMMAND="${binName} $*"
 
@@ -214,7 +222,7 @@ else
 fi
 `;
   } else {
-    userScriptContent = `${topShebang}\n${body}\n`;
+    userScriptContent = `${shebang}\n${body}\n`;
   }
 
   // Write the mock script directly to the binary path so it replaces the
