@@ -128,6 +128,14 @@ pnpm test     # run unit tests
 | `pnpm format` | Run all formatters (auto-fix)             |
 | `pnpm test`   | Run unit tests                            |
 
+## Packages
+
+This repository is a pnpm workspace. The `type-a-bin` library lives at
+the root; additional packages live under `packages/`:
+
+- [`packages/bin-test`](packages/bin-test/) — a dragon CLI demo that
+  consumes `type-a-bin` via `mockBin`.
+
 ## Special Thanks
 
 This project was inspired by and is a Node.js equivalent of
