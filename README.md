@@ -143,3 +143,12 @@ the root; additional packages live under `packages/`:
 This project was inspired by and is a Node.js equivalent of
 [mock-bin](https://github.com/stevemao/mock-bin) by [Steve
 Mao](https://github.com/stevemao).
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the development setup, coding conventions, and how to submit changes.
+
+## License
+
+[MIT](LICENSE) © SynthLuvr

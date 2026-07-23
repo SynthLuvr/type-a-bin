@@ -38,6 +38,7 @@ jobs:
           cp package.json "$stage/"
           cp -r dist "$stage/"
           cp README.md "$stage/" 2>/dev/null || true
+          cp LICENSE "$stage/" 2>/dev/null || true
           cd "$stage"
           git init -q -b dist
           git config user.name  "github-actions[bot]"

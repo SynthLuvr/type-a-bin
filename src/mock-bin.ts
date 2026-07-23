@@ -3,9 +3,7 @@ import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-interface MockBinCleanup {
-  (): void;
-}
+type MockBinCleanup = () => void;
 
 interface MockBinConfig {
   /** The name of the binary to mock (e.g., "gh", "git") */
@@ -105,7 +103,6 @@ async function mockBin(
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "mock-bin-"));
   const mockScriptPath = path.join(tempDir, binName);
-  const userScriptPath = path.join(tempDir, `.${binName}-user-script`);
   const runOriginalBinaryPath = path.join(tempDir, "mock-a-bin-run-original");
 
   // Create the 'mock-a-bin-run-original' helper binary. The user's mock
@@ -158,16 +155,10 @@ fi
     userScriptContent = `${normalizedShebang}\n${scriptCode}\n`;
   }
 
-  await writeFile(userScriptPath, userScriptContent);
-  await chmod(userScriptPath, 0o755);
-
-  // Create the main wrapper script that just runs the user's script.
-  const wrapperScript = `#!/bin/bash
-# Run the user's mock script with all arguments
-exec "${userScriptPath}" "$@"
-`;
-
-  await writeFile(mockScriptPath, wrapperScript);
+  // Write the mock script directly to the binary path so it replaces the
+  // real binary on the PATH (no wrapper indirection needed: the shebang
+  // selects the interpreter).
+  await writeFile(mockScriptPath, userScriptContent);
   await chmod(mockScriptPath, 0o755);
 
   // Prepend the temp directory to PATH so the mock takes precedence.
