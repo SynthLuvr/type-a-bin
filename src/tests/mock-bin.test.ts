@@ -18,6 +18,34 @@ describe("mockBin", () => {
     cleanup();
   });
 
+  it("mock by output string (output shorthand)", async () => {
+    const log = "mocking git!";
+    const cleanup = await mockBin("git", log);
+
+    const result = spawnSync("git", ["status"], { encoding: "utf-8" });
+
+    expect(result.stdout).toBe(`${log}\n`);
+
+    cleanup();
+  });
+
+  it("output shorthand with config and pattern", async () => {
+    const cleanup = await mockBin(
+      { binName: "git", pattern: "^git status" },
+      "mocked status",
+    );
+
+    const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
+    expect(statusResult.stdout).toBe("mocked status\n");
+
+    const versionResult = spawnSync("git", ["--version"], {
+      encoding: "utf-8",
+    });
+    expect(versionResult.stdout).toContain("git version");
+
+    cleanup();
+  });
+
   it("exit code", async () => {
     const cleanup = await mockBin("git", "#!/usr/bin/env bash", "exit 1");
 
