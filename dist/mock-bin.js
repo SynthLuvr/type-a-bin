@@ -25,7 +25,8 @@ const findBinaryInPath = async (binName, pathDirs) => {
     }
     return null;
 };
-const mockBin = async (binNameOrConfig, shebangOrOutput, code) => {
+// ast-grep-ignore: no-function-declaration
+async function mockBin(binNameOrConfig, shebangOrOutput, code) {
     const config = typeof binNameOrConfig === "string"
         ? { binName: binNameOrConfig }
         : binNameOrConfig;
@@ -114,5 +115,5 @@ exec "${userScriptPath}" "$@"
             console.warn(`Warning: Failed to remove mock-bin temp directory ${tempDir}: ${String(error)}`);
         }
     };
-};
+}
 export { mockBin };

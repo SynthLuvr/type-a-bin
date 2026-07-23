@@ -39,9 +39,6 @@ interface MockBinConfig {
  * cleanup() // Restore original PATH
  * ```
  */
-type MockBin = {
-    (binNameOrConfig: string | MockBinConfig, output: string): Promise<MockBinCleanup>;
-    (binNameOrConfig: string | MockBinConfig, shebang: string, code: string): Promise<MockBinCleanup>;
-};
-declare const mockBin: MockBin;
+declare function mockBin(binNameOrConfig: string | MockBinConfig, output: string): Promise<MockBinCleanup>;
+declare function mockBin(binNameOrConfig: string | MockBinConfig, shebang: string, code: string): Promise<MockBinCleanup>;
 export { type MockBinCleanup, type MockBinConfig, mockBin };

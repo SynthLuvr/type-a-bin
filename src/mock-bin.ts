@@ -71,23 +71,21 @@ const findBinaryInPath = async (
  * cleanup() // Restore original PATH
  * ```
  */
-type MockBin = {
-  (
-    binNameOrConfig: string | MockBinConfig,
-    output: string,
-  ): Promise<MockBinCleanup>;
-  (
-    binNameOrConfig: string | MockBinConfig,
-    shebang: string,
-    code: string,
-  ): Promise<MockBinCleanup>;
-};
-
-const mockBin: MockBin = async (
+function mockBin(
+  binNameOrConfig: string | MockBinConfig,
+  output: string,
+): Promise<MockBinCleanup>;
+function mockBin(
+  binNameOrConfig: string | MockBinConfig,
+  shebang: string,
+  code: string,
+): Promise<MockBinCleanup>;
+// ast-grep-ignore: no-function-declaration
+async function mockBin(
   binNameOrConfig: string | MockBinConfig,
   shebangOrOutput: string,
   code?: string,
-): Promise<MockBinCleanup> => {
+): Promise<MockBinCleanup> {
   const config =
     typeof binNameOrConfig === "string"
       ? { binName: binNameOrConfig }
@@ -189,6 +187,6 @@ exec "${userScriptPath}" "$@"
       );
     }
   };
-};
+}
 
 export { type MockBinCleanup, type MockBinConfig, mockBin };
