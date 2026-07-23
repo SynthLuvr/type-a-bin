@@ -14,16 +14,9 @@ interface HoardRow {
   treasure: string;
 }
 
-/**
- * The mocked `dragon` binary keeps a persistent ledger of every treasure it
- * hoards inside a SQLite database.
- *
- * mockBin writes the mock to an extensionless temp file, which Node parses as
- * CommonJS, so the script uses `require` together with the built-in
- * `node:sqlite` module — no native add-ons or extra dependencies needed. The
- * database path and the dragon's name are passed in via the environment so the
- * test controls where state lands and can read it straight back.
- */
+// mockBin writes the mock to an extensionless temp file, so Node parses it as
+// CommonJS and the script must use `require`. The test passes the DB path and
+// dragon name through the environment.
 const hoardScript = `
 const { DatabaseSync } = require("node:sqlite");
 
@@ -45,21 +38,11 @@ const treasure = "gold coins";
 const quantity = 999;
 
 const db = new DatabaseSync(dbPath);
-db.exec(
-  "CREATE TABLE IF NOT EXISTS hoard_ledger (" +
-    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-    "dragon TEXT NOT NULL, " +
-    "treasure TEXT NOT NULL, " +
-    "quantity INTEGER NOT NULL, " +
-    "hoarded_at TEXT NOT NULL)",
-);
+db.exec("CREATE TABLE IF NOT EXISTS hoard_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, dragon TEXT NOT NULL, treasure TEXT NOT NULL, quantity INTEGER NOT NULL, hoarded_at TEXT NOT NULL)");
 db.prepare(
-  "INSERT INTO hoard_ledger (dragon, treasure, quantity, hoarded_at) " +
-    "VALUES (?, ?, ?, ?)",
+  "INSERT INTO hoard_ledger (dragon, treasure, quantity, hoarded_at) VALUES (?, ?, ?, ?)",
 ).run(dragon, treasure, quantity, new Date().toISOString());
-console.log(
-  "The dragon " + dragon + " hoards " + quantity + " " + treasure + ".",
-);
+console.log("The dragon " + dragon + " hoards " + quantity + " " + treasure + ".");
 db.close();
 `;
 
@@ -83,19 +66,19 @@ describe("dragon hoard ledger (SQLite)", () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
+  const readRows = (sql: string): HoardRow[] => {
+    const db = new DatabaseSync(dbPath);
+    const rows = db.prepare(sql).all() as unknown as HoardRow[];
+    db.close();
+    return rows;
+  };
+
   it("records a hoarded treasure in the SQLite ledger", async () => {
     cleanup = await mockBin("dragon", "node", hoardScript);
 
-    const reply = hoard();
+    expect(hoard()).toBe("The dragon Pyrho hoards 999 gold coins.");
 
-    expect(reply).toBe("The dragon Pyrho hoards 999 gold coins.");
-
-    const db = new DatabaseSync(dbPath);
-    const rows = db
-      .prepare("SELECT * FROM hoard_ledger ORDER BY id")
-      .all() as unknown as HoardRow[];
-    db.close();
-
+    const rows = readRows("SELECT * FROM hoard_ledger ORDER BY id");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       dragon: "Pyrho",
@@ -112,12 +95,6 @@ describe("dragon hoard ledger (SQLite)", () => {
     hoard();
     hoard();
 
-    const db = new DatabaseSync(dbPath);
-    const row = db
-      .prepare("SELECT COUNT(*) AS n FROM hoard_ledger")
-      .get() as unknown as { n: number };
-    db.close();
-
-    expect(row.n).toBe(3);
+    expect(readRows("SELECT * FROM hoard_ledger")).toHaveLength(3);
   });
 });
