@@ -14,6 +14,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "arktype": "^2.2.3",
     "type-a-bin": "workspace:*",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"

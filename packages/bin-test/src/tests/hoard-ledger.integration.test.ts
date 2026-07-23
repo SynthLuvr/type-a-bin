@@ -2,17 +2,20 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { type } from "arktype";
 import { mockBin } from "type-a-bin";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hoard } from "../dragon.js";
 
-interface HoardRow {
-  dragon: string;
-  hoarded_at: string;
-  id: number;
-  quantity: number;
-  treasure: string;
-}
+const hoardRow = type({
+  dragon: "string",
+  hoarded_at: "string",
+  id: "number",
+  quantity: "number",
+  treasure: "string",
+});
+
+type HoardRow = typeof hoardRow.infer;
 
 // mockBin writes the mock to an extensionless temp file, so Node parses it as
 // CommonJS and the script must use `require`. The test passes the DB path and
@@ -68,7 +71,7 @@ describe("dragon hoard ledger (SQLite)", () => {
 
   const readRows = (sql: string): HoardRow[] => {
     const db = new DatabaseSync(dbPath);
-    const rows = db.prepare(sql).all() as unknown as HoardRow[];
+    const rows = hoardRow.array().assert(db.prepare(sql).all());
     db.close();
     return rows;
   };
