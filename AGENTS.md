@@ -94,4 +94,6 @@ formats all files 4. `biome check` — applies lint auto-fixes
 - Tests live in `src/tests/` (filenames end in `.test.ts`)
 - `pnpm build` emits compiled output to `dist/` — use `tsx` for dev
   execution
+- Additional packages live under `packages/` (e.g. `packages/bin-test`,
+  a dragon CLI demo consuming `type-a-bin`)
 - ESM only (`"type": "module"`)

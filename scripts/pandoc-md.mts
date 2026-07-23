@@ -12,18 +12,24 @@
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(fileURLToPath(import.meta.url), "..", "..");
 const SKIP_PARTS = new Set(["node_modules", ".git"]);
 
-const findMarkdown = (): string[] =>
-  (readdirSync(ROOT, { recursive: true }) as string[])
-    .filter((p) => p.endsWith(".md"))
-    .filter((p) => !p.split(sep).some((part) => SKIP_PARTS.has(part)))
-    .map((p) => join(ROOT, p))
-    .sort();
+const findMarkdown = (dir: string, acc: string[] = []): string[] => {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_PARTS.has(entry.name)) continue;
+    // Skip symbolic links so pnpm's workspace dependency links can never
+    // form a recursive cycle (which would loop forever here).
+    if (entry.isSymbolicLink()) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) findMarkdown(full, acc);
+    else if (entry.isFile() && entry.name.endsWith(".md")) acc.push(full);
+  }
+  return acc.sort();
+};
 
 const pandocFormat = (file: string): string => {
   const result = spawnSync("pandoc", [file, "-t", "gfm"], {
@@ -46,7 +52,7 @@ if (mode !== "--check" && mode !== "--write") {
   process.exit(2);
 }
 
-const files = findMarkdown();
+const files = findMarkdown(ROOT);
 const drifted: string[] = [];
 
 for (const file of files) {

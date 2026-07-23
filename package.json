@@ -17,12 +17,9 @@
     "node": "==26"
   },
   "scripts": {
-    "prebuild:clean": "pnpm del -rf dist",
-    "prebuild": "pnpm npm-run-all prebuild:clean",
-    "build": "pnpm tsc",
-    "postbuild:clean": "pnpm del -rf dist/tests",
-    "postbuild": "pnpm npm-run-all postbuild:clean",
-    "format:arrows": "pnpm convert-to-arrow .",
+    "build:lib": "pnpm del -rf dist && pnpm tsc && pnpm del -rf dist/tests",
+    "build": "pnpm build:lib && pnpm -r build",
+    "format:arrows": "pnpm convert-to-arrow \"{src,packages/*/src}/**/*.{ts,tsx}\"",
     "format:biome": "pnpm biome format --write .",
     "format:braces": "pnpm strip-braces .",
     "format:check": "pnpm biome check --write .",
@@ -36,7 +33,8 @@
     "lint:file-comment": "pnpm exec sg scan --rule .ast-grep/rules/no-file-comment.yml --error=no-file-comment --globs '!**/*.d.ts' .",
     "lint:md": "tsx scripts/pandoc-md.mts --check",
     "format:md": "tsx scripts/pandoc-md.mts --write",
-    "test": "vitest run",
+    "test:lib": "vitest run",
+    "test": "pnpm build:lib && pnpm test:lib && pnpm -r test",
     "test:watch": "vitest"
   },
   "devDependencies": {
