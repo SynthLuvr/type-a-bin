@@ -2,6 +2,7 @@
   "name": "type-a-bin",
   "private": true,
   "description": "Mock any executable binary for testing in Node.js",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

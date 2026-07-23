@@ -140,6 +140,18 @@ the root; additional packages live under `packages/`:
 
 ## Special Thanks
 
-This project was inspired by and is a Node.js equivalent of
+This project began as a Deno-to-Node.js migration of
+[mock-a-bin](https://github.com/levibostian/mock-a-bin) by [Levi
+Bostian](https://github.com/levibostian), and it is also a Node.js
+alternative to the npm package
 [mock-bin](https://github.com/stevemao/mock-bin) by [Steve
 Mao](https://github.com/stevemao).
+
+## Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for
+the development setup, coding conventions, and how to submit changes.
+
+## License
+
+[MIT](LICENSE) © SynthLuvr
