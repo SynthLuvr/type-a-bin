@@ -2,6 +2,9 @@ import { mockBin } from "type-a-bin";
 import { afterEach, describe, expect, it } from "vitest";
 import { feed, hoard, roar, status } from "../dragon.js";
 
+const mockDragon = (pattern: string, script: string) =>
+  mockBin({ binName: "dragon", pattern }, "bash", script);
+
 describe("dragon CLI", () => {
   let cleanup: (() => void) | undefined;
 
@@ -11,36 +14,26 @@ describe("dragon CLI", () => {
   });
 
   it("roars with a torrent of flame", async () => {
-    cleanup = await mockBin(
-      { binName: "dragon", pattern: "roar" },
-      "bash",
-      'echo "RAAAAWR! The dragon unleashes a torrent of flame!"',
-    );
-    expect(roar()).toBe("RAAAAWR! The dragon unleashes a torrent of flame!");
+    const reply = "RAAAAWR! The dragon unleashes a torrent of flame!";
+    cleanup = await mockDragon("roar", `echo "${reply}"`);
+    expect(roar()).toBe(reply);
   });
 
   it("guards a hoard of 999 gold coins", async () => {
-    cleanup = await mockBin(
-      { binName: "dragon", pattern: "hoard" },
-      "bash",
-      'echo "The dragon sleeps atop 999 gold coins."',
-    );
-    expect(hoard()).toBe("The dragon sleeps atop 999 gold coins.");
+    const reply = "The dragon sleeps atop 999 gold coins.";
+    cleanup = await mockDragon("hoard", `echo "${reply}"`);
+    expect(hoard()).toBe(reply);
   });
 
   it("reports its status when asked", async () => {
-    cleanup = await mockBin(
-      { binName: "dragon", pattern: "status" },
-      "bash",
-      'echo "AWAKE - Mood: HUNGRY"',
-    );
-    expect(status()).toBe("AWAKE - Mood: HUNGRY");
+    const reply = "AWAKE - Mood: HUNGRY";
+    cleanup = await mockDragon("status", `echo "${reply}"`);
+    expect(status()).toBe(reply);
   });
 
   it("devours whatever treat it is fed", async () => {
-    cleanup = await mockBin(
-      { binName: "dragon", pattern: "feed" },
-      "bash",
+    cleanup = await mockDragon(
+      "feed",
       'echo "Nom nom nom! The dragon devours the $2."',
     );
     expect(feed("knight")).toBe("Nom nom nom! The dragon devours the knight.");
