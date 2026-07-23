@@ -1,6 +1,31 @@
 import { spawnSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { mockBin } from "../mock-bin.js";
+
+/** Creates a temp script file, mocks `testbin` to run it, returns stdout. */
+const runScriptFile = async (options: {
+  content: string;
+  extension: string;
+  shebang: string;
+  args?: string[];
+}): Promise<string> => {
+  const dir = await mkdtemp(path.join(tmpdir(), "mockbin-"));
+  const scriptPath = path.join(dir, `mock.${options.extension}`);
+  await writeFile(scriptPath, options.content);
+
+  const cleanup = await mockBin("testbin", options.shebang, {
+    file: scriptPath,
+  });
+  const result = spawnSync("testbin", options.args ?? [], {
+    encoding: "utf-8",
+  });
+  cleanup();
+  await rm(dir, { recursive: true, force: true });
+  return result.stdout;
+};
 
 describe("mockBin", () => {
   it("mock and unmock git", async () => {
@@ -376,5 +401,65 @@ describe("mockBin", () => {
     expect(statusResult.stdout).toBe("mocked with empty pattern\n");
 
     cleanup();
+  });
+
+  it("mock with a script file (node)", async () => {
+    expect(
+      await runScriptFile({
+        content: 'console.log("hello from file")',
+        extension: "js",
+        shebang: "node",
+      }),
+    ).toBe("hello from file\n");
+  });
+
+  it("mock with a TypeScript script file via node --import tsx", async () => {
+    expect(
+      await runScriptFile({
+        content: 'const value: number = 42; console.log("ts value " + value);',
+        extension: "ts",
+        shebang: "node --import tsx",
+      }),
+    ).toBe("ts value 42\n");
+  });
+
+  it("mock with a bash script file", async () => {
+    expect(
+      await runScriptFile({
+        content: 'echo "from bash file $1"',
+        extension: "sh",
+        shebang: "bash",
+        args: ["arg"],
+      }),
+    ).toBe("from bash file arg\n");
+  });
+
+  it("script file with pattern mocks matching commands only", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "mockbin-pattern-"));
+    const scriptPath = path.join(dir, "mock.js");
+    await writeFile(scriptPath, 'console.log("file mock")');
+
+    const cleanup = await mockBin(
+      { binName: "git", pattern: "^git status" },
+      "node",
+      { file: scriptPath },
+    );
+
+    const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
+    expect(statusResult.stdout).toBe("file mock\n");
+
+    const versionResult = spawnSync("git", ["--version"], {
+      encoding: "utf-8",
+    });
+    expect(versionResult.stdout).toContain("git version");
+
+    cleanup();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("throws when the script file does not exist", async () => {
+    await expect(
+      mockBin("testbin", "node", { file: "/nonexistent/mock-script.js" }),
+    ).rejects.toThrow("script file not found");
   });
 });
