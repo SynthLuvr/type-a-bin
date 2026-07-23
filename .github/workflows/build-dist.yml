@@ -8,14 +8,16 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: publish-dist
+  cancel-in-progress: false # serialize; never cancel a mid-flight publish
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
-
       - uses: pnpm/action-setup@v6.0.9
-
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "26"
@@ -24,17 +26,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build
+      - name: Build library
+        run: pnpm build:lib # lib only — skip recursive packages build
 
-      - name: Commit dist
+      - name: Publish to dist branch
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "github-actions[bot]"
+          set -euo pipefail
+          stage="$(mktemp -d)"
+          cp package.json "$stage/"
+          cp -r dist "$stage/"
+          cp README.md "$stage/" 2>/dev/null || true
+          cd "$stage"
+          git init -q -b dist
+          git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f dist
-          if git diff --cached --quiet; then
-            echo "dist is up to date, nothing to commit"
-          else
-            git commit -m "chore: build dist [skip ci]"
-            git push
-          fi
+          git add -A
+          git commit -q -m "chore: publish dist for $(git -C "$GITHUB_WORKSPACE" rev-parse --short HEAD)"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" dist
