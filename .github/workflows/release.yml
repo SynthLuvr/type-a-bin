@@ -1,8 +1,9 @@
 name: Release
 
-# Manually triggered publish to npm.
-# Bumps the version, publishes to npm, tags the commit, and creates a
-# GitHub release — all in one go. See CONTRIBUTING.md / README for usage.
+# Manually triggered publish to npm using OIDC "trusted publishing" — no
+# long-lived npm token (NPM_TOKEN) is used. Authentication is handled by a
+# short-lived, per-run OIDC token that npm verifies against the "Trusted
+# Publisher" configured on npmjs.com. See the PR description for setup.
 on:
   workflow_dispatch:
     inputs:
@@ -21,19 +22,22 @@ on:
           - major
         default: patch
 
-# Releases mutate the repo (commit + tag) and the npm registry, so never
-# run two at once and never cancel one mid-flight.
+# contents: write -> commit the version bump, push the tag, open the release.
+# id-token:  write -> required for npm OIDC trusted publishing + provenance.
 permissions:
   contents: write
+  id-token: write
 
+# Releases mutate the repo (commit + tag) and the npm registry, so never run
+# two at once and never cancel one mid-flight.
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
   release:
-    # Only release from the default branch — keeps tags and the npm
-    # registry aligned with what's on main.
+    # Only release from the default branch — keeps tags and the npm registry
+    # aligned with what's on main.
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
@@ -41,8 +45,9 @@ jobs:
 
       - uses: pnpm/action-setup@v6.0.9
 
-      # registry-url writes an .npmrc entry that pnpm honors at publish
-      # time; NODE_AUTH_TOKEN is supplied on the publish step below.
+      # registry-url tells npm which registry to publish to; the actual
+      # authentication is the OIDC exchange (id-token: write above) checked
+      # against the npm trusted-publisher config. No NPM_TOKEN is needed.
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "26"
@@ -75,13 +80,15 @@ jobs:
           fi
           echo "NEW_VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
+      # Publish via the npm CLI — it performs the OIDC token exchange against
+      # the configured trusted publisher. pnpm drives everything else; npm
+      # publish is the documented command for OIDC trusted publishing.
+      # Provenance (build attestation) is generated automatically.
       - name: Publish to npm
-        run: pnpm publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance
 
-      # Only tag and release once npm accepts the package, so a failed
-      # publish never leaves an orphan tag or release.
+      # Only tag and release once npm accepts the package, so a failed publish
+      # never leaves an orphan tag or release.
       - name: Commit, tag, and push
         run: |
           set -euo pipefail
