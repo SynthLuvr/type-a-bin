@@ -1,6 +1,6 @@
 {
   "name": "type-a-bin",
-  "private": true,
+  "version": "0.1.0",
   "description": "Mock any executable binary for testing in Node.js",
   "license": "MIT",
   "type": "module",
