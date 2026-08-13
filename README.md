@@ -108,19 +108,23 @@ Every `mockBin()` call:
 ## Installation
 
 ``` bash
-pnpm add -D github:SynthLuvr/type-a-bin#dist
+pnpm add -D type-a-bin
 ```
 
-> The `dist` branch holds the compiled package and is updated
-> automatically on every merge to `main`. This means you always install
-> ready-to-use JavaScript — no build step on your end.
-
-With npm or yarn:
+Or with npm/yarn:
 
 ``` bash
-npm install -D SynthLuvr/type-a-bin#dist
-yarn add -D SynthLuvr/type-a-bin#dist
+npm install -D type-a-bin
+yarn add -D type-a-bin
 ```
+
+> You can also install pre-built packages straight from GitHub via the
+> `dist` branch, which is rebuilt automatically on every merge to
+> `main`:
+>
+> ``` bash
+> pnpm add -D github:SynthLuvr/type-a-bin#dist
+> ```
 
 ## Quick start
 
