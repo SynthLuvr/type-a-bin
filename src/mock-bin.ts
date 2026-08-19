@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { mockBinWindows } from "./mock-bin-windows.js";
 
 type MockBinCleanup = () => void;
 
@@ -163,8 +164,14 @@ async function mockBin(
       : binNameOrConfig;
   const { binName, pattern } = config;
 
+  // Windows needs a real .exe on the PATH plus a NODE_OPTIONS preload
+  // that redirects the shim's entry to the mock script; everything else
+  // (pattern handling, cleanup contract) behaves the same.
+  if (process.platform === "win32")
+    return mockBinWindows(binName, pattern, shebangOrOutput, codeOrScript);
+
   const originalPath = process.env.PATH ?? "";
-  const pathSeparator = process.platform === "win32" ? ";" : ":";
+  const pathSeparator = path.delimiter;
 
   const tempDir = await mkdtemp(path.join(tmpdir(), "mock-bin-"));
   const mockScriptPath = path.join(tempDir, binName);

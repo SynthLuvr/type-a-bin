@@ -17,6 +17,8 @@ pnpm install
   via `engines`)
 - [pandoc](https://pandoc.org) ≥ 3.1 — required by `pnpm lint:md` /
   `pnpm format:md`
+- On Windows: [Git for Windows](https://gitforwindows.org/) provides the
+  `bash` used by bash-interpreter tests
 
 ## Workflow
 
@@ -29,8 +31,8 @@ pnpm lint
 pnpm test
 ```
 
-These run automatically in CI on every pull request, so it’s best to run
-them locally first.
+These run automatically in CI on every pull request (Linux and Windows),
+so it’s best to run them locally first.
 
 ## Coding Conventions
 

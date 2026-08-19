@@ -18,7 +18,7 @@
     "node": "==26"
   },
   "scripts": {
-    "build:lib": "pnpm del -rf dist && pnpm tsc && pnpm del -rf dist/tests",
+    "build:lib": "pnpm del-cli dist && pnpm tsc && pnpm del-cli dist/tests",
     "build": "pnpm build:lib && pnpm -r build",
     "format:arrows": "pnpm convert-to-arrow \"{src,packages/*/src}/**/*.{ts,tsx}\"",
     "format:biome": "pnpm biome format --write .",
