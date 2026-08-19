@@ -74,12 +74,12 @@ slow, fragile, and impossible to reproduce deterministically.
 
 There are a few common workarounds, each with drawbacks:
 
-| Approach | Problem |
-|----|----|
-| Stub `child_process` | Couples tests to the module boundary; misses edge cases. |
-| `nock` / HTTP mocking | Only works for HTTP, not arbitrary binaries. |
-| Real binaries in CI | Slow, requires secrets, produces flaky tests. |
-| **Type-A-Bin** | Mocks *any* binary at the `PATH` level — transparently. |
+| Approach              | Problem                                                  |
+|-----------------------|----------------------------------------------------------|
+| Stub `child_process`  | Couples tests to the module boundary; misses edge cases. |
+| `nock` / HTTP mocking | Only works for HTTP, not arbitrary binaries.             |
+| Real binaries in CI   | Slow, requires secrets, produces flaky tests.            |
+| **Type-A-Bin**        | Mocks *any* binary at the `PATH` level — transparently.  |
 
 Type-A-Bin works by creating a temporary executable with the same name
 as the target binary and prepending its directory to `PATH`. When your
@@ -462,10 +462,10 @@ The function is overloaded with three signatures:
 mockBin(binNameOrConfig, output): Promise<MockBinCleanup>
 ```
 
-| Parameter | Type | Description |
-|----|----|----|
+| Parameter         | Type                      | Description                                         |
+|-------------------|---------------------------|-----------------------------------------------------|
 | `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` + `pattern` |
-| `output` | `string` | The text the mock echoes (via `bash`) |
+| `output`          | `string`                  | The text the mock echoes (via `bash`)               |
 
 Mocks the binary so that every invocation prints `output`. The fastest
 way to stub a command that just needs to return a string.
@@ -476,11 +476,11 @@ way to stub a command that just needs to return a string.
 mockBin(binNameOrConfig, shebang, code): Promise<MockBinCleanup>
 ```
 
-| Parameter | Type | Description |
-|----|----|----|
+| Parameter         | Type                      | Description                                         |
+|-------------------|---------------------------|-----------------------------------------------------|
 | `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` + `pattern` |
-| `shebang` | `string` | Interpreter (e.g. `"bash"`, `"node"`) |
-| `code` | `string` | The script body that runs when the mock is invoked |
+| `shebang`         | `string`                  | Interpreter (e.g. `"bash"`, `"node"`)               |
+| `code`            | `string`                  | The script body that runs when the mock is invoked  |
 
 Gives full control. The `shebang` accepts a bare interpreter name
 (wrapped in `#!/usr/bin/env …` automatically) or a full shebang line.
@@ -491,11 +491,11 @@ Gives full control. The `shebang` accepts a bare interpreter name
 mockBin(binNameOrConfig, shebang, script): Promise<MockBinCleanup>
 ```
 
-| Parameter | Type | Description |
-|----|----|----|
+| Parameter         | Type                      | Description                                         |
+|-------------------|---------------------------|-----------------------------------------------------|
 | `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` + `pattern` |
-| `shebang` | `string` | Interpreter used to run the file |
-| `script` | `MockBinScriptFile` | `{ file: string }` pointing at a script on disk |
+| `shebang`         | `string`                  | Interpreter used to run the file                    |
+| `script`          | `MockBinScriptFile`       | `{ file: string }` pointing at a script on disk     |
 
 Runs a script file through the given interpreter, keeping the file’s
 original extension so extension-aware loaders (e.g. `node --import tsx`)
@@ -648,17 +648,17 @@ any process that is not a mock shim.
 
 ## Comparison with other tools
 
-| Feature | Type-A-Bin | [mock-bin](https://github.com/stevemao/mock-bin) | [mock-a-bin](https://github.com/levibostian/mock-a-bin) |
-|----|:--:|:--:|:--:|
-| Mocks any binary via `PATH` | ✅ | ✅ | ✅ |
-| Runtime dependencies | 0 | several | several (Deno) |
-| TypeScript types & overloads | ✅ | ❌ | partial |
-| Output shorthand | ✅ | ❌ | ❌ |
-| Script-file mode (keeps extension) | ✅ | ❌ | ❌ |
-| Pattern-based conditional mocking | ✅ | ❌ | ❌ |
-| `run-original` pass-through | ✅ | ❌ | ✅ |
-| Cleanup function | ✅ | ✅ | ✅ |
-| Runtime | Node.js | Node.js | Deno |
+| Feature                            | Type-A-Bin | [mock-bin](https://github.com/stevemao/mock-bin) | [mock-a-bin](https://github.com/levibostian/mock-a-bin) |
+|------------------------------------|:----------:|:------------------------------------------------:|:-------------------------------------------------------:|
+| Mocks any binary via `PATH`        |     ✅     |                        ✅                        |                           ✅                            |
+| Runtime dependencies               |     0      |                     several                      |                     several (Deno)                      |
+| TypeScript types & overloads       |     ✅     |                        ❌                        |                         partial                         |
+| Output shorthand                   |     ✅     |                        ❌                        |                           ❌                            |
+| Script-file mode (keeps extension) |     ✅     |                        ❌                        |                           ❌                            |
+| Pattern-based conditional mocking  |     ✅     |                        ❌                        |                           ❌                            |
+| `run-original` pass-through        |     ✅     |                        ❌                        |                           ✅                            |
+| Cleanup function                   |     ✅     |                        ✅                        |                           ✅                            |
+| Runtime                            |  Node.js   |                     Node.js                      |                          Deno                           |
 
 ## Contributing
 
