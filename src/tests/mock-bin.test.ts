@@ -63,7 +63,7 @@ describe("mockBin", () => {
     const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
     expect(statusResult.stdout).toBe("mocked status\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.stdout).toContain("git version");
@@ -130,6 +130,49 @@ describe("mockBin", () => {
     cleanup();
   });
 
+  it("mock with node interpreter receives arguments", async () => {
+    const cleanup = await mockBin(
+      "testbin",
+      "node",
+      'console.log("args: " + process.argv.slice(2).join(" "))',
+    );
+
+    const result = spawnSync("testbin", ["one", "two"], {
+      encoding: "utf-8",
+    });
+
+    expect(result.stdout).toBe("args: one two\n");
+
+    cleanup();
+  });
+
+  it("output shorthand expands positional parameters", async () => {
+    const cleanup = await mockBin("testbin", "value: $1 and $2");
+
+    const result = spawnSync("testbin", ["a", "b"], { encoding: "utf-8" });
+
+    expect(result.stdout).toBe("value: a and b\n");
+
+    cleanup();
+  });
+
+  it.runIf(process.platform === "win32")(
+    "windows: cleanup restores NODE_OPTIONS and the mock registry",
+    async () => {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      const previousMocks = process.env.TYPE_A_BIN_MOCKS;
+      const cleanup = await mockBin("testbin", "bash", 'echo "test"');
+
+      expect(process.env.NODE_OPTIONS).not.toBe(previousNodeOptions);
+      expect(process.env.TYPE_A_BIN_MOCKS).not.toBe(previousMocks);
+
+      cleanup();
+
+      expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
+      expect(process.env.TYPE_A_BIN_MOCKS).toBe(previousMocks);
+    },
+  );
+
   it("cleanup restores original PATH", async () => {
     const originalPath = process.env.PATH;
     const cleanup = await mockBin("git", "bash", 'echo "test"');
@@ -183,27 +226,46 @@ describe("mockBin", () => {
   });
 
   it("environment variables are passed through to original command", async () => {
+    // `env` does not exist on Windows. git reads configuration from the
+    // environment (GIT_CONFIG_*), so the same passthrough is proven there
+    // by asking the real git (via mock-a-bin-run-original) to print an
+    // environment-provided config value.
+    const isWindows = process.platform === "win32";
+    const binName = isWindows ? "git" : "env";
+    const args = isWindows ? ["config", "test.customVar"] : [];
+    const passthroughEnv = isWindows
+      ? {
+          ...process.env,
+          GIT_CONFIG_COUNT: "1",
+          GIT_CONFIG_KEY_0: "test.customVar",
+          GIT_CONFIG_VALUE_0: "my-custom-value",
+        }
+      : {
+          ...process.env,
+          CUSTOM_TEST_VAR: "my-custom-value",
+          ANOTHER_VAR: "another-value",
+        };
+
     const cleanup = await mockBin(
-      "env",
+      binName,
       "bash",
       `
-      # Always pass through to real env command
+      # Always pass through to real command
       mock-a-bin-run-original "$@"
     `,
     );
 
-    const result = spawnSync("env", {
+    const result = spawnSync(binName, args, {
       encoding: "utf-8",
-      env: {
-        ...process.env,
-        CUSTOM_TEST_VAR: "my-custom-value",
-        ANOTHER_VAR: "another-value",
-      },
+      env: passthroughEnv,
     });
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("CUSTOM_TEST_VAR=my-custom-value");
-    expect(result.stdout).toContain("ANOTHER_VAR=another-value");
+    if (isWindows) expect(result.stdout).toContain("my-custom-value");
+    else {
+      expect(result.stdout).toContain("CUSTOM_TEST_VAR=my-custom-value");
+      expect(result.stdout).toContain("ANOTHER_VAR=another-value");
+    }
 
     cleanup();
   });
@@ -215,7 +277,7 @@ describe("mockBin", () => {
       'mock-a-bin-run-original "$@"',
     );
 
-    const result = spawnSync("git", ["--version"], { encoding: "utf-8" });
+    const result = spawnSync("git", ["version"], { encoding: "utf-8" });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("git version");
@@ -239,7 +301,7 @@ describe("mockBin", () => {
     const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
     expect(statusResult.stdout).toBe("mocked status output\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.status).toBe(0);
@@ -286,7 +348,7 @@ describe("mockBin", () => {
     const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
     expect(statusResult.stdout).toBe("mocked from node\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.status).toBe(0);
@@ -328,7 +390,7 @@ describe("mockBin", () => {
     const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
     expect(statusResult.stdout).toBe("mocked status\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.stdout).not.toBe("mocked status\n");
@@ -350,7 +412,7 @@ describe("mockBin", () => {
     const logResult = spawnSync("git", ["log"], { encoding: "utf-8" });
     expect(logResult.stdout).toBe("mocked: log\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.stdout).toContain("git version");
@@ -382,7 +444,7 @@ describe("mockBin", () => {
     const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
     expect(statusResult.stdout).toBe("all mocked\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.stdout).toBe("all mocked\n");
@@ -448,7 +510,7 @@ describe("mockBin", () => {
     const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
     expect(statusResult.stdout).toBe("file mock\n");
 
-    const versionResult = spawnSync("git", ["--version"], {
+    const versionResult = spawnSync("git", ["version"], {
       encoding: "utf-8",
     });
     expect(versionResult.stdout).toContain("git version");

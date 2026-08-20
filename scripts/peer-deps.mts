@@ -16,12 +16,22 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-const checkPeerDependencies = (): void => {
-  const result = spawnSync("pnpm", ["peers", "check"], {
-    cwd: ROOT,
-    encoding: "utf8",
-  });
+// npm_execpath (set while running under a pnpm script) may be a
+// standalone binary node cannot load, so hand it to node only when it
+// is a JavaScript file — e.g. npm-installed pnpm, whose Windows .cmd
+// shim spawnSync cannot execute — and otherwise run "pnpm" off PATH.
+const isJsEntry = (path: string): boolean => /\.(?:c|m)?js$/u.test(path);
 
+const runPnpm = (args: string[]) => {
+  const entry = process.env.npm_execpath;
+  const options = { cwd: ROOT, encoding: "utf8" } as const;
+  if (entry !== undefined && isJsEntry(entry))
+    return spawnSync(process.execPath, [entry, ...args], options);
+  return spawnSync("pnpm", args, options);
+};
+
+const checkPeerDependencies = (): void => {
+  const result = runPnpm(["peers", "check"]);
   if (result.error) throw result.error;
 
   if (result.status === 0) {

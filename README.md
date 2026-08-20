@@ -19,6 +19,7 @@ injecting a mock script into your `PATH`.
   let everything else fall through to the real binary.
 - **Any interpreter.** Bash, Node, Python, Perl — if it has a shebang,
   you can use it.
+- **Cross-platform.** The same API works on Linux and Windows.
 - **TypeScript-first.** Full type definitions and overloaded signatures.
 - **Zero dependencies at runtime.** Pure Node.js standard library.
 
@@ -57,6 +58,7 @@ fully typed, dependency-free library with richer features.
 - [Prerequisites](#prerequisites)
 - [Scripts](#scripts)
 - [How it works under the hood](#how-it-works-under-the-hood)
+- [Windows support](#windows-support)
 - [Comparison with other tools](#comparison-with-other-tools)
 - [Contributing](#contributing)
 - [License](#license)
@@ -540,6 +542,9 @@ library lives at the root; additional packages live under `packages/`:
 - [pandoc](https://pandoc.org) ≥ 3.1 — only needed for Markdown
   formatting/linting (`pnpm lint:md` / `pnpm format:md`), not for using
   the library
+- On Windows: [Git for Windows](https://gitforwindows.org/) — its bash
+  powers bash-interpreter mocks (node-interpreter mocks need nothing
+  beyond Node itself)
 
 ## Scripts
 
@@ -555,7 +560,8 @@ Run from the repository root:
 
 ## How it works under the hood
 
-When you call `mockBin(...)`:
+When you call `mockBin(...)` (on Linux/macOS — Windows follows the same
+shape, see [Windows support](#windows-support)):
 
 1.  **Temp directory.** A fresh directory is created under the OS temp
     folder (e.g. `/tmp/mock-bin-xxxx/`).
@@ -590,6 +596,55 @@ When you call `mockBin(...)`:
 
 Type-A-Bin handles the platform-specific path separator (`:` on Unix,
 `;` on Windows) automatically.
+
+## Windows support
+
+The same `mockBin` API works on Windows. Because Windows cannot execute
+extensionless `#!` scripts — and Node refuses to spawn `.cmd`/`.bat`
+shims without a shell — the implementation swaps the mechanism, not the
+contract:
+
+- Each mock binary is a **hard link of `node.exe`** named `<bin>.exe`
+  (copied if the temp directory is on another volume), prepended to
+  `PATH` exactly as on Linux.
+- A small **preload** is registered through `NODE_OPTIONS --import` in
+  every spawned process. It detects that the process was started as a
+  mock shim (its first CLI argument is not a real file), then swaps the
+  entry for your mock script — argv, stdin, stdout, stderr, and exit
+  codes all pass through.
+- Node-interpreter mocks (and `node --import tsx` script files) run
+  **in-process** through loader hooks; other interpreters (`bash`,
+  `python`, …) are resolved from `PATH` and spawned with your script and
+  the original arguments.
+- The `mock-a-bin-run-original` helper, `pattern` conditionals, output
+  shorthand, script files, and cleanup contract all behave as on Linux.
+  Cleanup additionally restores `NODE_OPTIONS` and the internal mock
+  registry.
+
+Requirements and behaviour notes:
+
+- **Bash mocks need Git for Windows.** Bash-like interpreters prefer a
+  native `bash.exe` (Git Bash) over WSL’s launcher, which cannot run
+  Windows-path scripts; well-known Git install locations are probed as a
+  fallback.
+- **The first CLI argument must be positional.** A shim *is* `node.exe`,
+  so a leading flag (`gh --version`) is consumed by Node’s own option
+  parser before the mock can intercept it. Prefer the subcommand form
+  (`gh version`), or wrap the flag behind a positional subcommand.
+- **Pass-through needs a real `.exe`.** `mock-a-bin-run-original` and
+  pattern fall-through locate and spawn the original binary directly;
+  `.cmd`/`.bat`-only binaries (e.g. `npm.cmd`) cannot be spawned by Node
+  without a shell.
+- **The output shorthand expands `$1`–`$9`, `$*`, and `$@`** from the
+  command line (matching bash `echo` for positional parameters); other
+  shell substitutions are printed literally.
+- **Stacked mocks clean up last-in, first-out.** Like `PATH`, the mock
+  registry and `NODE_OPTIONS` are snapshot-restored, so call the cleanup
+  functions in reverse order of the `mockBin` calls for a full restore.
+
+`NODE_OPTIONS` is process environment, not global state: it only affects
+processes spawned while mocks are active, and the preload is inert for
+any process that is not a mock shim.
 
 ## Comparison with other tools
 
