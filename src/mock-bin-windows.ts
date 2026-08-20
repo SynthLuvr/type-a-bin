@@ -96,18 +96,15 @@ const toShebangLine = (interpreter: string): string =>
  * positional parameters, so the Node twin expands `$1`..`$9`, `$*`, and
  * `$@` from the command line to keep the shorthand's behaviour aligned.
  */
-const echoScript = (output: string): string => {
-  const expansions = [
-    'text.replace(/\\$[@*]/g, args.join(" "))',
-    '.replace(/\\$(\\d)/g, (_, digit) => args[Number(digit) - 1] ?? "")',
-  ].join("\n    ");
-  return [
-    "const args = process.argv.slice(2);",
-    `const positional = (text) => ${expansions};`,
-    `console.log(positional(${JSON.stringify(output)}));`,
-    "",
-  ].join("\n");
-};
+const echoScript = (output: string): string => `
+const args = process.argv.slice(2);
+const expand = (text) =>
+  text
+    .replace(/\\$[@*]/g, args.join(" "))
+    .replace(/\\$(\\d)/g, (_, digit) => args[Number(digit) - 1] ?? "");
+console.log(expand(${JSON.stringify(output)}));
+`;
+
 const assertScriptFile = async (file: string): Promise<void> => {
   const stats = await stat(file).catch(() => null);
   if (!stats?.isFile())
@@ -145,13 +142,14 @@ const mockBinWindows = async (
     codeOrScript === undefined ? ["node"] : toInterpreterWords(shebangOrOutput);
   const isNodeMock = codeOrScript === undefined || isNodeInterpreter(words);
 
+  const interpreter = isNodeMock
+    ? undefined
+    : interpreterExecutableName(words[0]);
   let entry: string;
-  let interpreter: string | undefined;
   if (typeof codeOrScript === "object") {
     // Script files keep their real extension, so extension-aware loaders
     // (e.g. node --import tsx) parse them.
     entry = path.resolve(codeOrScript.file);
-    interpreter = isNodeMock ? undefined : interpreterExecutableName(words[0]);
   } else if (isNodeMock) {
     // Inline code runs as CommonJS, matching the extensionless scripts
     // the POSIX implementation writes (node parses those as CommonJS).
@@ -159,7 +157,6 @@ const mockBinWindows = async (
     const code = codeOrScript ?? echoScript(shebangOrOutput);
     await writeFile(entry, `${code}\n`);
   } else {
-    interpreter = interpreterExecutableName(words[0]);
     entry = path.join(tempDir, `${binBase}-mock.sh`);
     await writeFile(
       entry,
@@ -170,7 +167,7 @@ const mockBinWindows = async (
   const target: MockTarget = {
     kind: isNodeMock ? "node" : "spawn",
     entry,
-    ...(isNodeMock ? {} : { interpreter }),
+    ...(interpreter === undefined ? {} : { interpreter }),
     ...(pattern ? { pattern } : {}),
     originalPath,
   };
@@ -185,9 +182,12 @@ const mockBinWindows = async (
   // The preload rides along after the tsx loader when the interpreter
   // names it, so .ts entries resolve through tsx's ESM hooks in the
   // same resolve chain that redirects the shim entry.
-  const imports = [`--import ${pathToFileURL(preloadPath).href}`];
-  if (isNodeMock && usesTsx(words))
-    imports.unshift(`--import ${resolveTsxImportUrl()}`);
+  const imports = [
+    ...(isNodeMock && usesTsx(words)
+      ? [`--import ${resolveTsxImportUrl()}`]
+      : []),
+    `--import ${pathToFileURL(preloadPath).href}`,
+  ];
   process.env.NODE_OPTIONS =
     previousNodeOptions === undefined || previousNodeOptions === ""
       ? imports.join(" ")

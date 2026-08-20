@@ -81,6 +81,12 @@ const writeError = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
 
+// Lookup failures exit 127, matching the POSIX mock scripts.
+const fail = (message: string): never => {
+  writeError(message);
+  process.exit(127);
+};
+
 const isFile = (candidate: string): boolean => {
   try {
     return statSync(candidate).isFile();
@@ -94,14 +100,18 @@ const searchPathDirs = (originalPath: string | undefined): string[] =>
     .split(delimiter)
     .filter((dir) => dir !== "" && !dir.includes("mock-bin-"));
 
-const findExecutable = (name: string, dirs: string[]): string | null => {
+const pathCandidates = (name: string, dirs: string[]): string[] => {
+  const candidates: string[] = [];
   for (const dir of dirs)
     for (const extension of PATH_EXTENSIONS) {
       const candidate = join(dir, `${name}${extension}`);
-      if (isFile(candidate)) return candidate;
+      if (isFile(candidate)) candidates.push(candidate);
     }
-  return null;
+  return candidates;
 };
+
+const findExecutable = (name: string, dirs: string[]): string | null =>
+  pathCandidates(name, dirs)[0] ?? null;
 
 const spawnRealAndExit = (command: string, args: string[]): never => {
   // The real binary must not be re-intercepted by this preload.
@@ -113,24 +123,18 @@ const spawnRealAndExit = (command: string, args: string[]): never => {
 };
 
 const runOriginalCommand = (spec: RunOriginalTarget | undefined): never => {
-  if (spec === undefined) {
-    writeError(`Error: ${HELPER_NAME} used outside a mockBin context`);
-    process.exit(127);
-  }
+  if (spec === undefined)
+    return fail(`Error: ${HELPER_NAME} used outside a mockBin context`);
   const real = findExecutable(spec.binName, searchPathDirs(spec.originalPath));
-  if (real === null) {
-    writeError(`Error: Original '${spec.binName}' command not found in PATH`);
-    process.exit(127);
-  }
+  if (real === null)
+    return fail(`Error: Original '${spec.binName}' command not found in PATH`);
   return spawnRealAndExit(real, cliArgs);
 };
 
 const runRealBinary = (target: MockTarget): never => {
   const real = findExecutable(invokedName, searchPathDirs(target.originalPath));
-  if (real === null) {
-    writeError(`Error: Real binary '${invokedName}' not found in PATH`);
-    process.exit(127);
-  }
+  if (real === null)
+    return fail(`Error: Real binary '${invokedName}' not found in PATH`);
   return spawnRealAndExit(real, cliArgs);
 };
 
@@ -163,12 +167,7 @@ const resolveInterpreter = (interpreter: string): string | null => {
   const dirs = (process.env.PATH ?? "")
     .split(delimiter)
     .filter((dir) => dir !== "");
-  const candidates: string[] = [];
-  for (const dir of dirs)
-    for (const extension of PATH_EXTENSIONS) {
-      const candidate = join(dir, `${interpreter}${extension}`);
-      if (isFile(candidate)) candidates.push(candidate);
-    }
+  const candidates = pathCandidates(interpreter, dirs);
   if (BASH_LIKE_INTERPRETERS.includes(interpreter)) {
     const native = candidates.find((candidate) => !isWslLauncher(candidate));
     if (native !== undefined) return native;
@@ -180,10 +179,8 @@ const resolveInterpreter = (interpreter: string): string | null => {
 
 const runInterpreterAndExit = (interpreter: string, entry: string): never => {
   const interpreterPath = resolveInterpreter(interpreter);
-  if (interpreterPath === null) {
-    writeError(`Error: Interpreter '${interpreter}' not found in PATH`);
-    process.exit(127);
-  }
+  if (interpreterPath === null)
+    return fail(`Error: Interpreter '${interpreter}' not found in PATH`);
   const result = spawnSync(interpreterPath, [entry, ...cliArgs], {
     stdio: "inherit",
   });
@@ -252,10 +249,7 @@ const runEntryDirectly = async (entry: string): Promise<void> => {
 };
 
 const intercept = async (): Promise<void> => {
-  if (invokedName === HELPER_NAME) {
-    runOriginalCommand(mocks.runOriginal);
-    return;
-  }
+  if (invokedName === HELPER_NAME) return runOriginalCommand(mocks.runOriginal);
   const target = mocks.targets?.[invokedName];
   if (target === undefined) return;
   // A process whose CLI entry is a real file is not a shim: mock scripts
@@ -266,17 +260,16 @@ const intercept = async (): Promise<void> => {
   const commandLine = `${invokedName} ${cliArgs.join(" ")}`;
   const mocked =
     target.pattern === undefined ||
-    target.pattern === "" ||
     new RegExp(target.pattern).test(commandLine);
   if (!mocked) return runRealBinary(target);
-  if (process.argv[1] === undefined && target.kind === "node")
-    return runEntryDirectly(target.entry);
-  if (target.kind === "node") return redirectNodeEntry(target.entry);
-  return runInterpreterAndExit(target.interpreter ?? "bash", target.entry);
+  if (target.kind !== "node")
+    return runInterpreterAndExit(target.interpreter ?? "bash", target.entry);
+  if (process.argv[1] === undefined) return runEntryDirectly(target.entry);
+  return redirectNodeEntry(target.entry);
 };
 
 // Only a shim's own main thread may intercept: loaders such as tsx spawn
 // workers whose entry-point load must pass through untouched.
 if (process.env[MOCKS_VAR] !== undefined && threadId === 0) await intercept();
 
-export type { MocksEnv, MockTarget, RunOriginalTarget };
+export type { MocksEnv, MockTarget };
