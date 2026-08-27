@@ -586,6 +586,11 @@ then commits the version bump, pushes the `vX.Y.Z` tag, and opens the
 GitHub release. (Version `0.1.0` was published manually to claim the
 package name; every later version goes through the workflow.)
 
+> **Note:** Provenance requires `package.json` to carry `repository.url`
+> matching the GitHub repository
+> (`https://github.com/SynthLuvr/type-a-bin`); the registry rejects the
+> publish (E422) if it is missing or different.
+
 ## How it works under the hood
 
 When you call `mockBin(...)` (on Linux/macOS — Windows follows the same

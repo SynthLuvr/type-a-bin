@@ -89,16 +89,22 @@ jobs:
       # Provenance (build attestation) is generated automatically.
       - name: Publish to npm
         id: publish
-        run: npm publish --provenance
+        run: |
+          set -o pipefail
+          npm publish --provenance 2>&1 | tee /tmp/publish.log
 
-      # The registry masks a rejected trusted-publisher exchange as a bare
-      # E404 ("could not be found or you do not have permission"), which
-      # looks like a missing package rather than an auth failure. Surface
-      # the real cause and its fix instead of leaving them buried in logs.
+      # Both failure modes below are cryptic in raw logs: the registry
+      # masks a rejected trusted-publisher exchange as a bare E404, and
+      # a provenance/repository mismatch surfaces as E422. Translate
+      # them into the actual fix.
       - name: Diagnose publish failure
         if: failure() && steps.publish.outcome == 'failed'
         run: |
-          echo "::error title=npm publish failed::If the step above ended with E404 on PUT, the registry rejected the OIDC trusted-publisher exchange. Fix on npmjs.com -> type-a-bin -> Settings -> Trusted publishing: repository owner 'SynthLuvr', repository 'type-a-bin', workflow filename 'release.yml', environment left empty, allowed action 'npm publish'. Then re-run this workflow. Docs: https://docs.npmjs.com/trusted-publishers"
+          if grep -q 'E404' /tmp/publish.log; then
+            echo "::error title=E404 on PUT::The registry rejected the OIDC trusted-publisher exchange. Fix on npmjs.com -> type-a-bin -> Settings -> Trusted publishing: repository owner 'SynthLuvr', repository 'type-a-bin', workflow filename 'release.yml', environment left empty, allowed action 'npm publish'. Docs: https://docs.npmjs.com/trusted-publishers"
+          elif grep -q 'E422' /tmp/publish.log; then
+            echo "::error title=E422 provenance mismatch::The registry could not verify the provenance bundle. With --provenance, package.json's repository.url must match the provenance repository: https://github.com/SynthLuvr/type-a-bin. Keep that field in sync with the repo."
+          fi
 
       # Only tag and release once npm accepts the package, so a failed publish
       # never leaves an orphan tag or release.
