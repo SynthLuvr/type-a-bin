@@ -22,14 +22,17 @@ on:
           - major
         default: patch
 
-# contents: write -> commit the version bump, push the tag, open the release.
-# id-token:  write -> required for npm OIDC trusted publishing + provenance.
+# contents: write      -> push the release branch/tag, open the GitHub release
+# pull-requests: write -> open and merge the version-bump PR (main is
+#                         protected by the "main" ruleset; see below)
+# id-token:  write     -> required for npm OIDC trusted publishing + provenance.
 permissions:
   contents: write
+  pull-requests: write
   id-token: write
 
-# Releases mutate the repo (commit + tag) and the npm registry, so never run
-# two at once and never cancel one mid-flight.
+# Releases mutate the repo (PR + tag) and the npm registry, so never run two
+# at once and never cancel one mid-flight.
 concurrency:
   group: release
   cancel-in-progress: false
@@ -48,7 +51,7 @@ jobs:
       # registry-url tells npm which registry to publish to; the actual
       # authentication is the OIDC exchange (id-token: write above) checked
       # against the npm trusted-publisher config. No NPM_TOKEN is needed.
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@7.0.0
         with:
           node-version: "26"
           # npm trusted-publishing guidance: never cache in release builds.
@@ -85,11 +88,19 @@ jobs:
       # the configured trusted publisher. pnpm drives everything else; npm
       # publish is the documented command for OIDC trusted publishing.
       # Provenance (build attestation) is generated automatically.
+      # The already-on-npm guard keeps the workflow re-runnable: if a previous
+      # run published but failed afterwards (e.g. its git steps were rejected),
+      # a re-run of the same version skips publish and completes the
+      # tag/release bookkeeping instead of dying with EPUBLISHCONFLICT.
       - name: Publish to npm
         id: publish
         run: |
           set -o pipefail
-          npm publish --provenance 2>&1 | tee /tmp/publish.log
+          if npm view "type-a-bin@${NEW_VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::type-a-bin@${NEW_VERSION} is already on npm; skipping publish"
+          else
+            npm publish --provenance 2>&1 | tee /tmp/publish.log
+          fi
 
       # Both failure modes are cryptic in raw logs: the registry masks a
       # rejected trusted-publisher exchange as a bare E404, and a
@@ -103,25 +114,43 @@ jobs:
             echo "::error title=E422 provenance mismatch::The registry could not verify the provenance bundle. With --provenance, package.json's repository.url must match the provenance repository: https://github.com/SynthLuvr/type-a-bin. Keep that field in sync with the repo."
           fi
 
-      # Only tag and release once npm accepts the package, so a failed publish
-      # never leaves an orphan tag or release.
-      - name: Commit, tag, and push
+      # The "main" ruleset (Require a pull request before merging, no bypass
+      # actors) rejects direct pushes to main with GH013, so the bump goes
+      # through a short-lived PR. The ruleset requires 0 approving reviews,
+      # which lets this workflow merge its own PR immediately. Branches and
+      # tags are not covered by the ruleset and can be pushed directly.
+      # Note: pushes/merges made with the default github.token never trigger
+      # other workflows, so this merge does not start Build dist; the next
+      # human push to main will refresh the dist branch.
+      - name: Open and merge version-bump PR
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # checkout detaches HEAD; (re)create a local main to commit on.
-          git checkout -B main
+          branch="release/v${NEW_VERSION}"
+          # checkout detaches HEAD; carry the bump onto a release branch.
+          git checkout -B "$branch"
           git add package.json
           git commit -m "chore(release): v${NEW_VERSION}"
-          git tag "v${NEW_VERSION}"
-          git push origin main
-          git push origin "v${NEW_VERSION}"
+          git push origin "$branch"
+          pr_url="$(gh pr create --base main --head "$branch" \
+            --title "chore(release): v${NEW_VERSION}" \
+            --body "Automated version bump for the v${NEW_VERSION} release (type-a-bin@${NEW_VERSION} is on npm).")"
+          gh pr merge "$pr_url" --squash --delete-branch
+          merge_sha="$(gh pr view "$pr_url" --json mergeCommit --jq .mergeCommit.oid)"
+          echo "MERGE_SHA=${merge_sha}" >> "$GITHUB_ENV"
 
-      - name: Create GitHub release
+      # Only tag and release once npm has accepted the package, so a failed
+      # publish never leaves an orphan tag or release.
+      - name: Tag and create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          git tag "v${NEW_VERSION}" "${MERGE_SHA}"
+          git push origin "v${NEW_VERSION}"
           gh release create "v${NEW_VERSION}" \
             --title "v${NEW_VERSION}" \
             --notes "Published type-a-bin@${NEW_VERSION} to npm: https://www.npmjs.com/package/type-a-bin/v/${NEW_VERSION}"
