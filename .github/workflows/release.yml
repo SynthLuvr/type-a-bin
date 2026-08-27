@@ -23,8 +23,7 @@ on:
         default: patch
 
 # contents: write      -> push the release branch/tag, open the GitHub release
-# pull-requests: write -> open and merge the version-bump PR (main is
-#                         protected by the "main" ruleset; see below)
+# pull-requests: write -> open and merge the version-bump PR (see below)
 # id-token:  write     -> required for npm OIDC trusted publishing + provenance.
 permissions:
   contents: write
@@ -51,7 +50,7 @@ jobs:
       # registry-url tells npm which registry to publish to; the actual
       # authentication is the OIDC exchange (id-token: write above) checked
       # against the npm trusted-publisher config. No NPM_TOKEN is needed.
-      - uses: actions/setup-node@7.0.0
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: "26"
           # npm trusted-publishing guidance: never cache in release builds.
@@ -88,10 +87,9 @@ jobs:
       # the configured trusted publisher. pnpm drives everything else; npm
       # publish is the documented command for OIDC trusted publishing.
       # Provenance (build attestation) is generated automatically.
-      # The already-on-npm guard keeps the workflow re-runnable: if a previous
-      # run published but failed afterwards (e.g. its git steps were rejected),
-      # a re-run of the same version skips publish and completes the
-      # tag/release bookkeeping instead of dying with EPUBLISHCONFLICT.
+      # Skip publish when the version is already on npm, so a run that
+      # published but failed at a later step can be re-run to finish the
+      # tag/release bookkeeping instead of failing with EPUBLISHCONFLICT.
       - name: Publish to npm
         id: publish
         run: |
@@ -116,12 +114,11 @@ jobs:
 
       # The "main" ruleset (Require a pull request before merging, no bypass
       # actors) rejects direct pushes to main with GH013, so the bump goes
-      # through a short-lived PR. The ruleset requires 0 approving reviews,
-      # which lets this workflow merge its own PR immediately. Branches and
-      # tags are not covered by the ruleset and can be pushed directly.
-      # Note: pushes/merges made with the default github.token never trigger
-      # other workflows, so this merge does not start Build dist; the next
-      # human push to main will refresh the dist branch.
+      # through a short-lived PR. Its 0-approving-reviews requirement lets the
+      # workflow merge its own PR immediately. Branches and tags are not
+      # covered by the ruleset and can be pushed directly. Merges made with
+      # the default github.token never trigger other workflows, so this merge
+      # does not start Build dist; the next human push to main will.
       - name: Open and merge version-bump PR
         env:
           GH_TOKEN: ${{ github.token }}
