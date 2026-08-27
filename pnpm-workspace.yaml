@@ -5,10 +5,4 @@ allowBuilds:
   "@ast-grep/cli": true
   esbuild: true
 
-# @types/node@26.4.0 is the latest release but younger than pnpm 11's
-# default minimumReleaseAge (~24h), which frozen CI installs enforce.
-# Drop this entry once the package is older than the cutoff.
-minimumReleaseAgeExclude:
-  - "@types/node@26.4.0"
-
 scriptShell: bash

@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.3.0",
     "arktype": "^2.2.3",
     "type-a-bin": "workspace:*",
     "typescript": "^7.0.2",

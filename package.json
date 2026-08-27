@@ -44,7 +44,7 @@
     "@ast-grep/cli": "^0.45.2",
     "@ast-grep/cli-linux-x64-gnu": "^0.45.2",
     "@biomejs/biome": "^2.5.10",
-    "@types/node": "^26.4.0",
+    "@types/node": "^26.3.0",
     "@vitest/coverage-v8": "^4.1.11",
     "convert-to-arrow": "^1.1.4",
     "del-cli": "^7.0.0",
