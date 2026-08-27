@@ -51,9 +51,7 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "26"
-          # No package-manager cache in release builds: the published
-          # artifact must come from a cold, reproducible install (per
-          # https://docs.npmjs.com/trusted-publishers).
+          # npm trusted-publishing guidance: never cache in release builds.
           package-manager-cache: false
           registry-url: "https://registry.npmjs.org"
 
@@ -93,10 +91,9 @@ jobs:
           set -o pipefail
           npm publish --provenance 2>&1 | tee /tmp/publish.log
 
-      # Both failure modes below are cryptic in raw logs: the registry
-      # masks a rejected trusted-publisher exchange as a bare E404, and
-      # a provenance/repository mismatch surfaces as E422. Translate
-      # them into the actual fix.
+      # Both failure modes are cryptic in raw logs: the registry masks a
+      # rejected trusted-publisher exchange as a bare E404, and a
+      # provenance/repository mismatch surfaces as E422.
       - name: Diagnose publish failure
         if: failure() && steps.publish.outcome == 'failed'
         run: |

@@ -566,19 +566,11 @@ workflow](https://github.com/SynthLuvr/type-a-bin/actions/workflows/release.yml)
 using OIDC trusted publishing — no npm token is stored in the
 repository.
 
-One-time setup on npm (required before the workflow can publish):
-
-1.  On npmjs.com, open the package **type-a-bin → Settings → Trusted
-    publishing** and add a GitHub Actions publisher with repository
-    owner `SynthLuvr`, repository `type-a-bin`, workflow filename
-    `release.yml`, an *empty* environment, and the `npm publish` action
-    allowed.
-
-2.  If the workflow fails with
-    `E404 Not Found - PUT https://registry.npmjs.org/type-a-bin`, the
-    registry rejected the OIDC exchange: the trusted-publisher entry is
-    missing or does not match those exact values. The 404 is npm masking
-    an auth failure — it does not mean the package name is wrong.
+One-time setup on npm (required before the workflow can publish): on
+npmjs.com, open the package **type-a-bin → Settings → Trusted
+publishing** and add a GitHub Actions publisher with repository owner
+`SynthLuvr`, repository `type-a-bin`, workflow filename `release.yml`,
+an *empty* environment, and the `npm publish` action allowed.
 
 To cut a release, run the workflow from `main` with a semver `bump` or
 an exact `version`. It builds, tests, publishes to npm with provenance,
@@ -586,10 +578,16 @@ then commits the version bump, pushes the `vX.Y.Z` tag, and opens the
 GitHub release. (Version `0.1.0` was published manually to claim the
 package name; every later version goes through the workflow.)
 
-> **Note:** Provenance requires `package.json` to carry `repository.url`
-> matching the GitHub repository
-> (`https://github.com/SynthLuvr/type-a-bin`); the registry rejects the
-> publish (E422) if it is missing or different.
+If publishing fails, the workflow annotates the run with the fix. Both
+known registry rejections are auth or provenance problems, not problems
+with the package itself:
+
+- `E404 Not Found - PUT https://registry.npmjs.org/type-a-bin` — npm
+  masks a rejected OIDC exchange as a 404: the trusted-publisher entry
+  is missing or does not match the exact values above.
+- `E422` — provenance requires `package.json` to carry `repository.url`
+  matching the GitHub repository
+  (`https://github.com/SynthLuvr/type-a-bin`).
 
 ## How it works under the hood
 
