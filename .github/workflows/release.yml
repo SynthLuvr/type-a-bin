@@ -51,7 +51,8 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "26"
-          cache: "pnpm"
+          # npm trusted-publishing guidance: never cache in release builds.
+          package-manager-cache: false
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
@@ -85,7 +86,22 @@ jobs:
       # publish is the documented command for OIDC trusted publishing.
       # Provenance (build attestation) is generated automatically.
       - name: Publish to npm
-        run: npm publish --provenance
+        id: publish
+        run: |
+          set -o pipefail
+          npm publish --provenance 2>&1 | tee /tmp/publish.log
+
+      # Both failure modes are cryptic in raw logs: the registry masks a
+      # rejected trusted-publisher exchange as a bare E404, and a
+      # provenance/repository mismatch surfaces as E422.
+      - name: Diagnose publish failure
+        if: failure() && steps.publish.outcome == 'failed'
+        run: |
+          if grep -q 'E404' /tmp/publish.log; then
+            echo "::error title=E404 on PUT::The registry rejected the OIDC trusted-publisher exchange. Fix on npmjs.com -> type-a-bin -> Settings -> Trusted publishing: repository owner 'SynthLuvr', repository 'type-a-bin', workflow filename 'release.yml', environment left empty, allowed action 'npm publish'. Docs: https://docs.npmjs.com/trusted-publishers"
+          elif grep -q 'E422' /tmp/publish.log; then
+            echo "::error title=E422 provenance mismatch::The registry could not verify the provenance bundle. With --provenance, package.json's repository.url must match the provenance repository: https://github.com/SynthLuvr/type-a-bin. Keep that field in sync with the repo."
+          fi
 
       # Only tag and release once npm accepts the package, so a failed publish
       # never leaves an orphan tag or release.
