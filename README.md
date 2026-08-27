@@ -574,9 +574,12 @@ an *empty* environment, and the `npm publish` action allowed.
 
 To cut a release, run the workflow from `main` with a semver `bump` or
 an exact `version`. It builds, tests, publishes to npm with provenance,
-then commits the version bump, pushes the `vX.Y.Z` tag, and opens the
-GitHub release. (Version `0.1.0` was published manually to claim the
-package name; every later version goes through the workflow.)
+then lands the version bump on `main` via an automatically merged pull
+request (the `main` ruleset requires all changes to go through a PR, so
+the workflow cannot push to `main` directly), pushes the `vX.Y.Z` tag,
+and opens the GitHub release. If the version is already on npm — e.g. a
+previous run published but failed later — publish is skipped and only
+the remaining bookkeeping runs, so re-running the same version is safe.
 
 If publishing fails, the workflow annotates the run with the fix. Both
 known registry rejections are auth or provenance problems, not problems
