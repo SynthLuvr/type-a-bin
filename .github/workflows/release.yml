@@ -119,6 +119,17 @@ jobs:
       # covered by the ruleset and can be pushed directly. Merges made with
       # the default github.token never trigger other workflows, so this merge
       # does not start Build dist; the next human push to main will.
+      #
+      # Requires the repo setting "Allow GitHub Actions to create and approve
+      # pull requests" (Settings -> Actions -> General -> Workflow
+      # permissions); without it gh pr create fails with "GitHub Actions is
+      # not permitted to create or approve pull requests" even though the
+      # token has pull-requests: write.
+      #
+      # Re-runnable: a partially-failed earlier attempt may have left the
+      # release branch and/or its PR behind. The workflow owns release/*
+      # branches, so an unconditional force push supersedes the stale copy,
+      # and an already-open PR is reused instead of recreated.
       - name: Open and merge version-bump PR
         env:
           GH_TOKEN: ${{ github.token }}
@@ -131,23 +142,46 @@ jobs:
           git checkout -B "$branch"
           git add package.json
           git commit -m "chore(release): v${NEW_VERSION}"
-          git push origin "$branch"
-          pr_url="$(gh pr create --base main --head "$branch" \
-            --title "chore(release): v${NEW_VERSION}" \
-            --body "Automated version bump for the v${NEW_VERSION} release (type-a-bin@${NEW_VERSION} is on npm).")"
-          gh pr merge "$pr_url" --squash --delete-branch
+          git push --force origin "$branch"
+          pr_url="$(gh pr list --head "$branch" --state open --json url --jq '.[0].url')"
+          if [ -z "$pr_url" ]; then
+            pr_url="$(gh pr create --base main --head "$branch" \
+              --title "chore(release): v${NEW_VERSION}" \
+              --body "Automated version bump for the v${NEW_VERSION} release (type-a-bin@${NEW_VERSION} is on npm).")"
+          fi
+          if [ "$(gh pr view "$pr_url" --json state --jq .state)" = "OPEN" ]; then
+            gh pr merge "$pr_url" --squash --delete-branch
+          fi
           merge_sha="$(gh pr view "$pr_url" --json mergeCommit --jq .mergeCommit.oid)"
           echo "MERGE_SHA=${merge_sha}" >> "$GITHUB_ENV"
 
       # Only tag and release once npm has accepted the package, so a failed
       # publish never leaves an orphan tag or release.
+      #
+      # MERGE_SHA is born on the server via the squash merge and is NOT in
+      # this depth-1 clone — fetch it before tagging. Tolerate an existing
+      # tag/release so a re-run that only failed here can finish.
       - name: Tag and create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git tag "v${NEW_VERSION}" "${MERGE_SHA}"
-          git push origin "v${NEW_VERSION}"
-          gh release create "v${NEW_VERSION}" \
-            --title "v${NEW_VERSION}" \
-            --notes "Published type-a-bin@${NEW_VERSION} to npm: https://www.npmjs.com/package/type-a-bin/v/${NEW_VERSION}"
+          git fetch origin main --depth=1
+          main_sha="$(git rev-parse origin/main)"
+          if [ "$main_sha" != "$MERGE_SHA" ]; then
+            echo "::error::origin/main (${main_sha}) is no longer the release merge (${MERGE_SHA}); refusing to tag the wrong commit"
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/v${NEW_VERSION}" >/dev/null 2>&1; then
+            echo "::notice::tag v${NEW_VERSION} already exists; skipping tag push"
+          else
+            git tag "v${NEW_VERSION}" "${MERGE_SHA}"
+            git push origin "v${NEW_VERSION}"
+          fi
+          if gh release view "v${NEW_VERSION}" >/dev/null 2>&1; then
+            echo "::notice::release v${NEW_VERSION} already exists; skipping"
+          else
+            gh release create "v${NEW_VERSION}" \
+              --title "v${NEW_VERSION}" \
+              --notes "Published type-a-bin@${NEW_VERSION} to npm: https://www.npmjs.com/package/type-a-bin/v/${NEW_VERSION}"
+          fi
