@@ -21,6 +21,14 @@ pnpm build && pnpm lint && pnpm test
 
 All three must pass with zero errors.
 
+Run tooling through `pnpm <script>`, never by invoking a binary in
+`node_modules/.bin` directly — the scripts rely on pnpm putting that
+directory on `PATH` and on `scriptShell: bash` from
+`pnpm-workspace.yaml`. When adding a script, call the binary by bare
+name (`biome check .`); do not wrap it in `pnpm` or `pnpm exec`, which
+re-resolves it through a Windows `.CMD` shim that AppLocker-managed
+hosts block. On Windows, drive the toolchain from Git Bash.
+
 ## Coding Conventions (Enforced)
 
 These are **not** preferences — the toolchain will fail if you violate

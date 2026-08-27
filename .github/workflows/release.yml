@@ -41,9 +41,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.0
+      - uses: actions/checkout@v7.0.1
 
-      - uses: pnpm/action-setup@v6.0.9
+      - uses: pnpm/action-setup@v6.0.10
 
       # registry-url tells npm which registry to publish to; the actual
       # authentication is the OIDC exchange (id-token: write above) checked

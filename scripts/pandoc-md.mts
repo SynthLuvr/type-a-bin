@@ -6,9 +6,9 @@
  *   pnpm format:md -> tsx scripts/pandoc-md.mts --write   (overwrites each file)
  *
  * Every tracked `*.md` file must be byte-for-byte identical to the output of
- * `pandoc <name>.md -t gfm`, making pandoc the single source of truth for
- * Markdown formatting. Requires `pandoc` on PATH (installed in CI; see
- * .github/workflows/ci.yml and the README "Prerequisites" note).
+ * `pandoc --eol=lf -t gfm <name>.md`, making pandoc the single source of truth
+ * for Markdown formatting. `--eol=lf` overrides pandoc's `native` EOL mode,
+ * which emits CRLF on Windows and would break the byte-for-byte check.
  */
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,10 +20,9 @@ const SKIP_PARTS = new Set(["node_modules", ".git"]);
 
 const findMarkdown = (dir: string, acc: string[] = []): string[] => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (SKIP_PARTS.has(entry.name)) continue;
-    // Skip symbolic links so pnpm's workspace dependency links can never
-    // form a recursive cycle (which would loop forever here).
-    if (entry.isSymbolicLink()) continue;
+    // Symlinks are skipped: pnpm workspace links can form cycles that
+    // would loop this walk forever.
+    if (SKIP_PARTS.has(entry.name) || entry.isSymbolicLink()) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) findMarkdown(full, acc);
     else if (entry.isFile() && entry.name.endsWith(".md")) acc.push(full);
@@ -32,7 +31,7 @@ const findMarkdown = (dir: string, acc: string[] = []): string[] => {
 };
 
 const pandocFormat = (file: string): string => {
-  const result = spawnSync("pandoc", [file, "-t", "gfm"], {
+  const result = spawnSync("pandoc", ["--eol=lf", "-t", "gfm", file], {
     cwd: ROOT,
     encoding: "utf8",
   });
@@ -63,7 +62,7 @@ for (const file of files) {
     const err = error as NodeJS.ErrnoException;
     if (err.code === "ENOENT") {
       console.error(
-        "pandoc was not found on PATH. Install pandoc (>= 3.1) and retry.",
+        "pandoc was not found on PATH. Install pandoc (>= 3.10) and retry.",
       );
       process.exit(1);
     }

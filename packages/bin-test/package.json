@@ -3,20 +3,20 @@
   "private": true,
   "description": "Dragon CLI demo consuming type-a-bin",
   "type": "module",
-  "packageManager": "pnpm@11.15.0",
+  "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": "==26"
   },
   "scripts": {
-    "build": "pnpm tsc",
+    "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.3.0",
     "arktype": "^2.2.3",
     "type-a-bin": "workspace:*",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }
