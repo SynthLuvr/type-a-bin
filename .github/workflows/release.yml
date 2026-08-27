@@ -51,7 +51,10 @@ jobs:
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: "26"
-          cache: "pnpm"
+          # No package-manager cache in release builds: the published
+          # artifact must come from a cold, reproducible install (per
+          # https://docs.npmjs.com/trusted-publishers).
+          package-manager-cache: false
           registry-url: "https://registry.npmjs.org"
 
       - name: Install dependencies
@@ -85,7 +88,17 @@ jobs:
       # publish is the documented command for OIDC trusted publishing.
       # Provenance (build attestation) is generated automatically.
       - name: Publish to npm
+        id: publish
         run: npm publish --provenance
+
+      # The registry masks a rejected trusted-publisher exchange as a bare
+      # E404 ("could not be found or you do not have permission"), which
+      # looks like a missing package rather than an auth failure. Surface
+      # the real cause and its fix instead of leaving them buried in logs.
+      - name: Diagnose publish failure
+        if: failure() && steps.publish.outcome == 'failed'
+        run: |
+          echo "::error title=npm publish failed::If the step above ended with E404 on PUT, the registry rejected the OIDC trusted-publisher exchange. Fix on npmjs.com -> type-a-bin -> Settings -> Trusted publishing: repository owner 'SynthLuvr', repository 'type-a-bin', workflow filename 'release.yml', environment left empty, allowed action 'npm publish'. Then re-run this workflow. Docs: https://docs.npmjs.com/trusted-publishers"
 
       # Only tag and release once npm accepts the package, so a failed publish
       # never leaves an orphan tag or release.
