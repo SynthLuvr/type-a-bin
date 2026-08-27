@@ -5,6 +5,13 @@
  *
  *   pnpm lint:peer-deps -> tsx scripts/peer-deps.mts
  *
+ * pnpm is spawned via `npm_execpath` rather than by bare name: the `pnpm` on
+ * PATH is a `.cmd` shim on Windows, which needs `shell: true` to spawn and is
+ * blocked outright by AppLocker on managed hosts. `npm_execpath` is pnpm's
+ * real entry point — the JS file when pnpm is installed via npm/corepack (run
+ * under node), or the native executable itself for standalone (`@pnpm/exe`)
+ * installs — so neither a shim nor a shell is involved.
+ *
  * Uses `pnpm peers check` (which inspects the lockfile directly) rather than
  * `install --strict-peer-dependencies`: a frozen lockfile is not re-resolved
  * during install, so the strict flag silently misses pre-existing peer
@@ -16,22 +23,25 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-// npm_execpath (set while running under a pnpm script) may be a
-// standalone binary node cannot load, so hand it to node only when it
-// is a JavaScript file — e.g. npm-installed pnpm, whose Windows .cmd
-// shim spawnSync cannot execute — and otherwise run "pnpm" off PATH.
-const isJsEntry = (path: string): boolean => /\.(?:c|m)?js$/u.test(path);
-
-const runPnpm = (args: string[]) => {
-  const entry = process.env.npm_execpath;
-  const options = { cwd: ROOT, encoding: "utf8" } as const;
-  if (entry !== undefined && isJsEntry(entry))
-    return spawnSync(process.execPath, [entry, ...args], options);
-  return spawnSync("pnpm", args, options);
-};
-
 const checkPeerDependencies = (): void => {
-  const result = runPnpm(["peers", "check"]);
+  const pnpmEntry = process.env.npm_execpath;
+  if (pnpmEntry === undefined)
+    throw new Error(
+      "npm_execpath is unset — run this via `pnpm lint:peer-deps`.",
+    );
+
+  // `node <entry>` only works when the entry is JS; the standalone
+  // executable is spawned directly (no shell, no shim, on any platform).
+  const isJs = /\.(?:js|cjs|mjs)$/.test(pnpmEntry);
+  const result = spawnSync(
+    isJs ? process.execPath : pnpmEntry,
+    isJs ? [pnpmEntry, "peers", "check"] : ["peers", "check"],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+
   if (result.error) throw result.error;
 
   if (result.status === 0) {

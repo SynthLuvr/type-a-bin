@@ -15,7 +15,7 @@ pnpm install
 
 - [Node.js](https://nodejs.org) 26 and [pnpm](https://pnpm.io) (enforced
   via `engines`)
-- [pandoc](https://pandoc.org) ≥ 3.1 — required by `pnpm lint:md` /
+- [pandoc](https://pandoc.org) ≥ 3.10 — required by `pnpm lint:md` /
   `pnpm format:md`
 - On Windows: [Git for Windows](https://gitforwindows.org/) provides the
   `bash` used by bash-interpreter tests

@@ -66,9 +66,8 @@ const resolveScriptFile = async (
   const resolvedFile = path.resolve(file);
 
   const stats = await stat(resolvedFile).catch(() => null);
-  if (!stats?.isFile()) {
+  if (!stats?.isFile())
     throw new Error(`mockBin: script file not found: ${file}`);
-  }
 
   // Accept either a bare interpreter ("node --import tsx") or a full
   // shebang line ("#!/usr/bin/env node"); strip "#!" for the exec line.
