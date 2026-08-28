@@ -1,4 +1,4 @@
-import { defineConfig } from "vitest/config";
+import { vitestPreset } from "ts-canon/presets/vitest";
 
 // The library splits its implementation by platform: mock-bin.ts writes
 // POSIX shims, mock-bin-windows.ts is the Windows twin, and the active
@@ -10,24 +10,23 @@ import { defineConfig } from "vitest/config";
 const inactiveTwin =
   process.platform === "win32" ? "src/mock-bin.ts" : "src/mock-bin-windows.ts";
 
-const config = defineConfig({
-  test: {
-    include: ["src/tests/**/*.test.ts"],
-    coverage: {
-      provider: "v8",
-      include: ["src/**/*.ts"],
-      exclude: [
-        "src/tests/**",
-        "src/index.ts",
-        "src/mock-bin-preload.ts",
-        inactiveTwin,
-      ],
-      thresholds: {
-        lines: 80,
-        functions: 80,
-        statements: 80,
-        branches: 80,
-      },
+const config = vitestPreset({
+  // The override replaces the preset's coverage section, so spell out
+  // the whole thing: the preset defaults plus this repo's excludes.
+  coverage: {
+    provider: "v8",
+    include: ["src/**/*.ts"],
+    exclude: [
+      "src/tests/**",
+      "src/index.ts",
+      "src/mock-bin-preload.ts",
+      inactiveTwin,
+    ],
+    thresholds: {
+      lines: 80,
+      functions: 80,
+      statements: 80,
+      branches: 80,
     },
   },
 });

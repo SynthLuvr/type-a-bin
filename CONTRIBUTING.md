@@ -15,8 +15,10 @@ pnpm install
 
 - [Node.js](https://nodejs.org) 26 and [pnpm](https://pnpm.io) (enforced
   via `engines`)
-- [pandoc](https://pandoc.org) ≥ 3.10 — required by `pnpm lint:md` /
-  `pnpm format:md`
+- [pandoc](https://pandoc.org) ≥ 3.10 — required by the Markdown steps
+  of `pnpm lint` / `pnpm format` (run through
+  [ts-canon](https://github.com/SynthLuvr/ts-canon)); verify with
+  `pnpm exec ts-canon doctor`
 - On Windows: [Git for Windows](https://gitforwindows.org/) provides the
   `bash` used by bash-interpreter tests
 
@@ -55,8 +57,14 @@ This repo enforces a strict, opinionated style:
   trailing commas, semicolons, always-parenthesized arrow functions.
 - **ESM only** (`"type": "module"`).
 - **Markdown** is formatted with `pandoc -t gfm`, making pandoc the
-  single source of truth — run `pnpm format:md` after editing any `*.md`
+  single source of truth — run `pnpm format` after editing any `*.md`
   file.
+
+Lint and format run through
+[ts-canon](https://github.com/SynthLuvr/ts-canon), the shared org
+toolchain (one devDependency bundling biome, oxlint, the ast-grep rules,
+and the pandoc/peer-deps/audit helpers); `pnpm exec ts-canon doctor`
+checks the environment.
 
 ## Project Structure
 

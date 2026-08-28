@@ -5,4 +5,15 @@ allowBuilds:
   "@ast-grep/cli": true
   esbuild: true
 
+minimumReleaseAgeExclude:
+  - ts-canon@0.1.1
+
+# Without this, pnpm hoists workspace packages into
+# node_modules/.pnpm/node_modules/, and the bin-test -> type-a-bin
+# workspace link turns that into a symlink cycle back to the repo root.
+# `ts-canon format`'s convert-to-arrow step walks `.` and follows those
+# links, so the hoisted cycle makes it exhaust memory. Workspace
+# packages still resolve via their direct node_modules links.
+hoistWorkspacePackages: false
+
 scriptShell: bash
