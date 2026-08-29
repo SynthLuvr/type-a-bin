@@ -150,7 +150,7 @@ cleanup(); // Restore the original PATH
 
 ## Usage
 
-`mockBin` offers four calling conventions. Choose the one that fits how
+`mockBin` offers five calling conventions. Choose the one that fits how
 much control you need.
 
 ### 1. Output shorthand
@@ -232,6 +232,31 @@ original file keeps its real extension on disk, so extension-aware
 loaders work correctly. Internally, Type-A-Bin writes a tiny `/bin/sh`
 wrapper that `exec`s your file through the given interpreter, forwarding
 all arguments.
+
+**Picking the interpreter for you.** Skip the interpreter and pass only
+`{ file }` — the extension decides:
+
+``` ts
+const cleanup = await mockBin("dragon", {
+  file: "./src/tests/hoard-script.ts",
+});
+```
+
+| Extension | Interpreter |
+|----|----|
+| `.ts` `.tsx` `.mts` `.cts` | `node --import <tsx>` — the tsx loader, resolved to an absolute file URL |
+| `.js` `.mjs` `.cjs` | `node` |
+| `.sh` | `bash` |
+| anything else | throws — pass an interpreter explicitly |
+
+The absolute loader URL matters: a mocked binary often runs with a
+working directory outside your package (a temp dir, a fixture store),
+where a bare `node --import tsx` cannot resolve `tsx` and the mock would
+die on a module-not-found error. The shorthand resolves the loader once,
+from the script’s own package first and Type-A-Bin’s installed location
+second, and embeds the result. On Windows the same URL rides along in
+`NODE_OPTIONS` for the in-process shim. When tsx is not installed at
+all, Node’s native type stripping parses erasable TypeScript instead.
 
 This works with any language and any file extension:
 
@@ -332,7 +357,7 @@ name and all arguments (e.g. `gh pr list`). An empty pattern (`""`)
 mocks **every** invocation, just like passing no pattern at all — so you
 can toggle the behaviour dynamically.
 
-Pattern-based mocking composes with all four calling conventions,
+Pattern-based mocking composes with all five calling conventions,
 including the output shorthand:
 
 ``` ts
@@ -512,7 +537,24 @@ Creates a mock executable and prepends it to `PATH`. Returns an async
 **cleanup function** that restores the original `PATH` and removes the
 temp directory.
 
-The function is overloaded with four signatures:
+The function is overloaded with five signatures:
+
+#### Script file (interpreter inferred)
+
+``` ts
+mockBin(binNameOrConfig, script): Promise<MockBinCleanup>
+```
+
+| Parameter | Type | Description |
+|----|----|----|
+| `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` + `pattern` |
+| `script` | `MockBinScriptFile` | `{ file: string }` pointing at a script on disk |
+
+Runs a script file with the interpreter picked from its extension —
+TypeScript through the tsx loader (resolved to an absolute URL, so the
+mock works from any working directory), `.js` through node, `.sh`
+through bash. Throws for extensions with no known interpreter (pass one
+explicitly instead) or when the file does not exist.
 
 #### Output shorthand
 
@@ -794,7 +836,9 @@ contract:
 - Node-interpreter mocks (and `node --import tsx` script files) run
   **in-process** through loader hooks; other interpreters (`bash`,
   `python`, …) are resolved from `PATH` and spawned with your script and
-  the original arguments.
+  the original arguments. Script files using the interpreter-inference
+  shorthand work the same way: the tsx loader is resolved to an absolute
+  URL and prepended in `NODE_OPTIONS` ahead of the preload.
 - The `mock-a-bin-run-original` helper, `pattern` conditionals, output
   shorthand, script files, and cleanup contract all behave as on Linux.
   Cleanup additionally restores `NODE_OPTIONS` and the internal mock

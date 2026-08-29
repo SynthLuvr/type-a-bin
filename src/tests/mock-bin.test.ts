@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { mockBin } from "../mock-bin.js";
 
@@ -9,18 +10,23 @@ import { mockBin } from "../mock-bin.js";
 const runScriptFile = async (options: {
   content: string;
   extension: string;
-  shebang: string;
+  /** Omit to let the shorthand pick the interpreter from the extension. */
+  shebang?: string;
   args?: string[];
+  /** Working directory the mocked binary runs in. */
+  cwd?: string;
 }): Promise<string> => {
   const dir = await mkdtemp(path.join(tmpdir(), "mockbin-"));
   const scriptPath = path.join(dir, `mock.${options.extension}`);
   await writeFile(scriptPath, options.content);
 
-  const cleanup = await mockBin("testbin", options.shebang, {
-    file: scriptPath,
-  });
+  const cleanup =
+    options.shebang === undefined
+      ? await mockBin("testbin", { file: scriptPath })
+      : await mockBin("testbin", options.shebang, { file: scriptPath });
   const result = spawnSync("testbin", options.args ?? [], {
     encoding: "utf-8",
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
   cleanup();
   await rm(dir, { recursive: true, force: true });
@@ -523,5 +529,114 @@ describe("mockBin", () => {
     await expect(
       mockBin("testbin", "node", { file: "/nonexistent/mock-script.js" }),
     ).rejects.toThrow("script file not found");
+  });
+
+  describe("script-file shorthand", () => {
+    it("runs TypeScript through the tsx loader from any cwd", async () => {
+      // The enum needs a real transform — node's native type stripping
+      // rejects it — and the mock runs from a working directory outside
+      // this package, where a bare `node --import tsx` could not
+      // resolve. Passing proves the shorthand embedded an absolute
+      // loader URL and that tsx actually loaded the script.
+      const cwd = await mkdtemp(path.join(tmpdir(), "mockbin-cwd-"));
+      try {
+        expect(
+          await runScriptFile({
+            content: `enum Coin { Gold = 7 }
+const value: number = Coin.Gold;
+console.log(\`gold=\${value} \${process.argv.slice(2).join(",")}\`);`,
+            extension: "ts",
+            args: ["a", "b"],
+            cwd,
+          }),
+        ).toBe("gold=7 a,b\n");
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+
+    it("resolves tsx from the script's own package", async () => {
+      // The fixture lives inside this package (unlike the temp-dir
+      // scripts above), so the shorthand's first resolution base — the
+      // script's own location — finds tsx here. Its enum needs a real
+      // transform, proving the loader ran.
+      const cleanup = await mockBin("testbin", {
+        file: fileURLToPath(
+          new URL("./mock-shorthand-fixture.ts", import.meta.url),
+        ),
+      });
+      const result = spawnSync("testbin", ["x"], { encoding: "utf-8" });
+      cleanup();
+      expect(result.stdout).toBe("fixture gold=7 args=x\n");
+    });
+
+    it("loads .tsx files through the same loader", async () => {
+      expect(
+        await runScriptFile({
+          content: 'const value: number = 5; console.log("tsx ok " + value);',
+          extension: "tsx",
+        }),
+      ).toBe("tsx ok 5\n");
+    });
+
+    it("runs .js files through node", async () => {
+      expect(
+        await runScriptFile({
+          content: 'console.log("js " + process.argv[2]);',
+          extension: "js",
+          args: ["arg"],
+        }),
+      ).toBe("js arg\n");
+    });
+
+    it("runs .sh files through bash", async () => {
+      expect(
+        await runScriptFile({
+          content: 'echo "sh $1"',
+          extension: "sh",
+          args: ["arg"],
+        }),
+      ).toBe("sh arg\n");
+    });
+
+    it("rejects extensions with no known interpreter", async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "mockbin-"));
+      const scriptPath = path.join(dir, "mock.py");
+      await writeFile(scriptPath, 'print("nope")');
+
+      await expect(mockBin("testbin", { file: scriptPath })).rejects.toThrow(
+        "no interpreter known",
+      );
+
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("throws when the script file does not exist", async () => {
+      await expect(
+        mockBin("testbin", { file: "/nonexistent/mock-script.ts" }),
+      ).rejects.toThrow("script file not found");
+    });
+
+    it("honors the pattern config", async () => {
+      const dir = await mkdtemp(path.join(tmpdir(), "mockbin-pattern-"));
+      const scriptPath = path.join(dir, "mock.js");
+      await writeFile(scriptPath, 'console.log("shorthand file mock")');
+
+      const cleanup = await mockBin(
+        { binName: "git", pattern: "^git status" },
+        { file: scriptPath },
+      );
+
+      const statusResult = spawnSync("git", ["status"], { encoding: "utf-8" });
+      expect(statusResult.stdout).toBe("shorthand file mock\n");
+
+      const versionResult = spawnSync("git", ["version"], {
+        encoding: "utf-8",
+      });
+      expect(versionResult.stdout).toContain("git version");
+
+      cleanup();
+      await rm(dir, { recursive: true, force: true });
+    });
   });
 });

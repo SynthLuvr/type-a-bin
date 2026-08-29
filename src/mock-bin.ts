@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type { MockBinBehaviour, MockBinHandle } from "./mock-bin-behaviour.js";
 import { prepareBehaviour, withCalls } from "./mock-bin-behaviour.js";
+import { isTypeScriptFile, resolveTsxImportUrl } from "./mock-bin-tsx.js";
 import { mockBinWindows } from "./mock-bin-windows.js";
 
 type MockBinCleanup = () => void;
@@ -83,6 +84,47 @@ const resolveScriptFile = async (
   };
 };
 
+const NODE_SCRIPT_EXTENSIONS = [".cjs", ".js", ".mjs"];
+
+/** Runtime discriminates the script-file shorthand from a behaviour object. */
+const isScriptFile = (
+  value: MockBinBehaviour | MockBinScriptFile,
+): value is MockBinScriptFile =>
+  "file" in value && typeof value.file === "string";
+
+/**
+ * Picks the interpreter for the script-file shorthand from the file's
+ * extension. TypeScript runs through the tsx loader resolved to an
+ * absolute file URL — so the mock works no matter which working
+ * directory it is invoked from — JavaScript through node, and `.sh`
+ * through bash; anything else must name its interpreter explicitly.
+ */
+const scriptFileInterpreter = async (
+  script: MockBinScriptFile,
+): Promise<string> => {
+  const resolvedFile = path.resolve(script.file);
+  const stats = await stat(resolvedFile).catch(() => null);
+  if (!stats?.isFile())
+    throw new Error(`mockBin: script file not found: ${script.file}`);
+
+  if (isTypeScriptFile(resolvedFile)) {
+    const tsxImportUrl = resolveTsxImportUrl(resolvedFile);
+    // Without tsx, node's native type stripping still parses erasable
+    // TypeScript — the same fallback the Windows shim applies.
+    return tsxImportUrl === null ? "node" : `node --import ${tsxImportUrl}`;
+  }
+
+  const extension = path.extname(resolvedFile).toLowerCase();
+  if (NODE_SCRIPT_EXTENSIONS.includes(extension)) return "node";
+  if (extension === ".sh") return "bash";
+  throw new Error(
+    `mockBin: no interpreter known for '${
+      extension || "no extension"
+    }' script files; pass one explicitly, e.g. ` +
+      `mockBin(bin, "node", { file })`,
+  );
+};
+
 /**
  * Resolves the shebang and body for inline code or the output shorthand.
  * With no `code`, `shebangOrOutput` is echoed via bash.
@@ -103,17 +145,22 @@ const resolveInlineCode = (
  * original command, enabling conditional mocking where some subcommands
  * are mocked while others pass through to the real binary.
  *
- * There are four calling conventions:
+ * There are five calling conventions:
  *
  * 1. **Output shorthand** — pass the plain text the mock should print.
  *    The interpreter defaults to `bash` and the output is echoed.
  * 2. **Full script** — pass an interpreter (`shebang`) and arbitrary
  *    script `code` to run when the mock binary is invoked.
- * 3. **Script file** — pass an interpreter (`shebang`) and a
+ * 3. **Script-file shorthand** — pass only a `{ file }` object and the
+ *    interpreter is picked from the file's extension: TypeScript runs
+ *    through the tsx loader (resolved to an absolute URL so the mock
+ *    works from any working directory), `.js` through node, and `.sh`
+ *    through bash.
+ * 4. **Script file** — pass an interpreter (`shebang`) and a
  *    `{ file }` object pointing at a script on disk. The file keeps its
  *    own extension, so extension-aware loaders work (e.g.
  *    `node --import tsx` with a `.ts` file).
- * 4. **Scripted behaviour** — pass a `MockBinBehaviour` object instead
+ * 5. **Scripted behaviour** — pass a `MockBinBehaviour` object instead
  *    of a script. The mock records every invocation on the returned
  *    handle's `calls`, and the object scripts the output, exit code and
  *    timing without writing a script at all.
@@ -138,7 +185,15 @@ const resolveInlineCode = (
  *
  * @example
  * ```ts
- * // Script file (keeps its extension, so tsx transforms it)
+ * // Script-file shorthand (the extension picks the interpreter)
+ * const cleanup = await mockBin("dragon", {
+ *   file: "./src/tests/hoard-script.ts", // → node --import <absolute tsx>
+ * })
+ * ```
+ *
+ * @example
+ * ```ts
+ * // Script file with an explicit interpreter (keeps its extension)
  * const cleanup = await mockBin("dragon", "node --import tsx", {
  *   file: "./src/tests/hoard-script.ts",
  * })
@@ -158,6 +213,10 @@ function mockBin(
 ): Promise<MockBinCleanup>;
 function mockBin(
   binNameOrConfig: string | MockBinConfig,
+  script: MockBinScriptFile,
+): Promise<MockBinCleanup>;
+function mockBin(
+  binNameOrConfig: string | MockBinConfig,
   behaviour: MockBinBehaviour,
 ): Promise<MockBinHandle>;
 function mockBin(
@@ -172,7 +231,7 @@ function mockBin(
 ): Promise<MockBinCleanup>;
 async function mockBin(
   binNameOrConfig: string | MockBinConfig,
-  shebangOrOutput: string | MockBinBehaviour,
+  shebangOrOutput: string | MockBinBehaviour | MockBinScriptFile,
   codeOrScript?: string | MockBinScriptFile,
 ): Promise<MockBinCleanup> {
   const config =
@@ -180,6 +239,16 @@ async function mockBin(
       ? { binName: binNameOrConfig }
       : binNameOrConfig;
   const { binName, pattern } = config;
+
+  // Script-file shorthand: the file's extension picks the interpreter,
+  // including the tsx loader for TypeScript — resolved to an absolute
+  // file URL so the mock runs from any working directory.
+  if (typeof shebangOrOutput === "object" && isScriptFile(shebangOrOutput))
+    return mockBin(
+      config,
+      await scriptFileInterpreter(shebangOrOutput),
+      shebangOrOutput,
+    );
 
   // A scripted behaviour compiles to a node mock that carries its own
   // pattern check, so it installs through the ordinary inline-code path

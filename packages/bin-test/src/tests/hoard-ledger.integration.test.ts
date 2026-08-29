@@ -18,10 +18,12 @@ const hoardRow = type({
 
 type HoardRow = typeof hoardRow.infer;
 
-// The mock runs `node --import tsx` against this script. Keeping it as a
-// real .ts file means tsx transforms it (the mock binary itself is an
-// extensionless temp file, which tsx cannot parse). The DB path and
-// dragon name are passed through the environment.
+// The mock loads this script through the script-file shorthand: the
+// extension picks the interpreter (the tsx loader for `.ts`), resolved
+// to an absolute URL so the mock runs from any working directory.
+// Keeping it a real .ts file means tsx transforms it (the mock binary
+// itself is an extensionless temp file, which tsx cannot parse). The DB
+// path and dragon name are passed through the environment.
 const hoardScriptPath = fileURLToPath(
   new URL("./hoard-script.ts", import.meta.url),
 );
@@ -54,9 +56,7 @@ describe("dragon hoard ledger (SQLite)", () => {
   };
 
   it("records a hoarded treasure in the SQLite ledger", async () => {
-    cleanup = await mockBin("dragon", "node --import tsx", {
-      file: hoardScriptPath,
-    });
+    cleanup = await mockBin("dragon", { file: hoardScriptPath });
 
     expect(hoard()).toBe("The dragon Pyrho hoards 999 gold coins.");
 
@@ -71,9 +71,7 @@ describe("dragon hoard ledger (SQLite)", () => {
   });
 
   it("accumulates state across multiple hoards", async () => {
-    cleanup = await mockBin("dragon", "node --import tsx", {
-      file: hoardScriptPath,
-    });
+    cleanup = await mockBin("dragon", { file: hoardScriptPath });
 
     hoard();
     hoard();
