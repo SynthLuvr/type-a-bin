@@ -28,6 +28,14 @@ describe("dragon CLI", () => {
     expect(status()).toBe(reply);
   });
 
+  it("records the arguments the CLI passed to the binary", async () => {
+    const dragon = await mockBin("dragon", { stdout: "Nom nom nom!" });
+    cleanup = dragon;
+
+    expect(feed("knight")).toBe("Nom nom nom!");
+    expect(dragon.calls.map((call) => call.args)).toEqual([["feed", "knight"]]);
+  });
+
   it("devours whatever treat it is fed", async () => {
     cleanup = await mockBin(
       { binName: "dragon", pattern: "feed" },

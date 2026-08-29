@@ -15,6 +15,8 @@ injecting a mock script into your `PATH`.
   takes over.
 - **Total control over output and exit codes.** Return whatever stdout,
   stderr, and exit status your tests need.
+- **Invocation recording.** Scripted mocks record every call — argv,
+  cwd, env, even stdin — on `mock.calls` for assertions.
 - **Conditional mocking.** Mock only the subcommands you care about and
   let everything else fall through to the real binary.
 - **Any interpreter.** Bash, Node, Python, Perl — if it has a shebang,
@@ -41,6 +43,7 @@ fully typed, dependency-free library with richer features.
   - [1. Output shorthand](#1-output-shorthand)
   - [2. Full script](#2-full-script)
   - [3. Script file](#3-script-file)
+  - [4. Scripted behaviour](#4-scripted-behaviour)
   - [Conditional mocking](#conditional-mocking)
     - [Pattern-based mocking](#pattern-based-mocking)
     - [Script-based mocking with
@@ -147,7 +150,7 @@ cleanup(); // Restore the original PATH
 
 ## Usage
 
-`mockBin` offers three calling conventions. Choose the one that fits how
+`mockBin` offers four calling conventions. Choose the one that fits how
 much control you need.
 
 ### 1. Output shorthand
@@ -239,6 +242,60 @@ await mockBin("mycli", "python3", {
 });
 ```
 
+### 4. Scripted behaviour
+
+For the most common testing need — stub a binary’s output, set its exit
+code, and assert how it was invoked — skip the script entirely and pass
+a behaviour object. The mock prints your lines, exits with your code,
+and records every invocation:
+
+``` ts
+const mock = await mockBin("gh", {
+  stdout: ["#1 Fix login", "#2 Add docs"],
+  lineDelayMs: 50, // stream the lines one at a time
+  exitCode: 1,
+});
+
+// Anywhere in your code under test:
+// $ gh pr list  →  "#1 Fix login\n#2 Add docs\n", streamed, exit 1
+
+expect(mock.calls[0]?.args).toEqual(["pr", "list"]);
+expect(mock.calls[0]?.cwd).toBe(process.cwd());
+expect(mock.calls[0]?.env.GH_TOKEN).toBe("secret");
+
+mock(); // The handle is still the cleanup function
+```
+
+Each call is recorded the moment the mock starts — before it sleeps,
+streams, or answers — so `mock.calls` is ready to assert even while a
+slow mock is still running. Reading stdin blocks until the caller closes
+it, so it is opt-in: `record: { stdin: true }` captures the full input
+as `call.stdin`, ideal for asserting the payload your code piped into
+the binary.
+
+The behaviour object scripts the whole response:
+
+| Option | Type | Default | Description |
+|----|----|----|----|
+| `record` | `boolean \| { stdin?: boolean }` | `true` | Record invocations on `mock.calls` |
+| `stdout` | `string \| readonly string[]` | — | Line(s) written to stdout, each followed by a newline |
+| `stderr` | `string \| readonly string[]` | — | Line(s) written to stderr, after the stdout lines |
+| `exitCode` | `number` | `0` | Exit code the mock finishes with |
+| `delayMs` | `number` | `0` | Delay before the mock writes anything |
+| `lineDelayMs` | `number` | `0` | Gap between stdout lines, so a tailing consumer sees them one at a time |
+| `spawnChild` | `boolean \| { lifetimeMs?: number }` | — | Spawn a long-lived descendant, its pid recorded as `call.childPid` |
+| `trapSignals` | `boolean \| { lifetimeMs?: number }` | — | Ignore SIGINT/SIGTERM, forcing a stop to escalate to SIGKILL |
+
+The last two script lifecycle scenarios: `spawnChild` lets a test prove
+a stop reaps the whole process tree rather than the mock alone;
+`trapSignals` lets it prove a stop escalates to SIGKILL. Both keep the
+mock (and any descendant) alive for a bounded `lifetimeMs` — 120s by
+default — so a mock a test forgets to stop cannot outlive the suite.
+
+Pattern-based mocking composes here too: matching invocations run the
+behaviour, everything else falls through to the real binary and is not
+recorded (see [Conditional mocking](#conditional-mocking)).
+
 ### Conditional mocking
 
 Often you want to mock only *some* invocations of a command and let
@@ -275,7 +332,7 @@ name and all arguments (e.g. `gh pr list`). An empty pattern (`""`)
 mocks **every** invocation, just like passing no pattern at all — so you
 can toggle the behaviour dynamically.
 
-Pattern-based mocking composes with all three calling conventions,
+Pattern-based mocking composes with all four calling conventions,
 including the output shorthand:
 
 ``` ts
@@ -455,7 +512,7 @@ Creates a mock executable and prepends it to `PATH`. Returns an async
 **cleanup function** that restores the original `PATH` and removes the
 temp directory.
 
-The function is overloaded with three signatures:
+The function is overloaded with four signatures:
 
 #### Output shorthand
 
@@ -502,6 +559,23 @@ Runs a script file through the given interpreter, keeping the file’s
 original extension so extension-aware loaders (e.g. `node --import tsx`)
 work. Throws if the file does not exist.
 
+#### Scripted behaviour
+
+``` ts
+mockBin(binNameOrConfig, behaviour): Promise<MockBinHandle>
+```
+
+| Parameter | Type | Description |
+|----|----|----|
+| `binNameOrConfig` | `string \| MockBinConfig` | Binary name, or a config with `binName` + `pattern` |
+| `behaviour` | `MockBinBehaviour` | Object scripting output, exit code, timing and lifecycle |
+
+Runs a mock scripted entirely by the `behaviour` object — no
+interpreter, no script. Returns a `MockBinHandle`: the ordinary cleanup
+function, extended with a `calls` property holding every recorded
+invocation in call order. `calls` is read fresh on each access and keeps
+serving the last snapshot after cleanup.
+
 ### Types
 
 ``` ts
@@ -523,6 +597,76 @@ interface MockBinScriptFile {
    * binary is written to an extensionless temp file.
    */
   file: string;
+}
+
+/** A cleanup function, carrying the calls a scripted mock recorded. */
+type MockBinHandle = MockBinCleanup & {
+  /** Every recorded invocation, in call order. */
+  readonly calls: MockBinCall[];
+};
+
+/** One recorded invocation of a scripted mock. */
+interface MockBinCall {
+  /** Arguments the mock was invoked with, excluding the binary name. */
+  args: string[];
+  /** Working directory the mock ran in. */
+  cwd: string;
+  /** Environment the mock ran with. */
+  env: Record<string, string>;
+  /** Process id of the mock itself. */
+  pid: number;
+  /** Stdin, when the behaviour recorded it. */
+  stdin?: string;
+  /** Pid of the descendant, when the behaviour spawned one. */
+  childPid?: number;
+}
+
+/** How long a spawned descendant or a signal-trapped mock stays alive. */
+interface MockBinLifetimeOptions {
+  /** Lifetime in milliseconds. Default 120000. */
+  lifetimeMs?: number;
+}
+
+/** Extra recording knobs for a scripted mock. */
+interface MockBinRecordOptions {
+  /**
+   * Read stdin to end-of-file and record it as `call.stdin`. Off by
+   * default: a mock that drains stdin waits for the caller to close it.
+   */
+  stdin?: boolean;
+}
+
+/** Scripts a mock's output, exit code, timing and lifecycle. */
+interface MockBinBehaviour {
+  /**
+   * Record every invocation for `handle.calls`. On by default; pass
+   * `false` to skip recording, or `{ stdin: true }` to capture stdin
+   * as well.
+   */
+  record?: boolean | MockBinRecordOptions;
+  /** Line(s) written to stdout, each followed by a newline. */
+  stdout?: string | readonly string[];
+  /** Line(s) written to stderr, after the stdout lines. */
+  stderr?: string | readonly string[];
+  /** Exit code the mock finishes with. Default 0. */
+  exitCode?: number;
+  /** Delay before the mock writes anything, in milliseconds. */
+  delayMs?: number;
+  /**
+   * Gap between stdout lines, in milliseconds, so a consumer tailing
+   * the stream sees them arrive one at a time instead of one burst.
+   */
+  lineDelayMs?: number;
+  /**
+   * Spawn a long-lived descendant and record its pid as `call.childPid`,
+   * so a test can prove a stop reaps the whole process tree.
+   */
+  spawnChild?: boolean | MockBinLifetimeOptions;
+  /**
+   * Ignore SIGINT and SIGTERM, so stopping the mock has to escalate to
+   * SIGKILL.
+   */
+  trapSignals?: boolean | MockBinLifetimeOptions;
 }
 ```
 
