@@ -103,7 +103,7 @@ const resolveInlineCode = (
  * original command, enabling conditional mocking where some subcommands
  * are mocked while others pass through to the real binary.
  *
- * There are three calling conventions:
+ * There are four calling conventions:
  *
  * 1. **Output shorthand** — pass the plain text the mock should print.
  *    The interpreter defaults to `bash` and the output is echoed.

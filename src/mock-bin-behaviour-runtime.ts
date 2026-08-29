@@ -20,19 +20,13 @@ const MOCKS_VAR = "TYPE_A_BIN_MOCKS";
 const WINDOWS_EXTENSIONS = ["", ".exe", ".cmd", ".bat", ".com"];
 
 interface MockBehaviourScript {
-  /** Name of the binary being mocked, as the pattern sees it. */
+  /** Binary name, as the pattern matches it against the command line. */
   binName: string;
-  /** Lines written to stdout, each followed by a newline. */
   stdout: string[];
-  /** Lines written to stderr, after the stdout lines. */
   stderr: string[];
-  /** Exit code the mock finishes with. */
   exitCode: number;
-  /** Delay before the mock writes anything, in milliseconds. */
   delayMs: number;
-  /** Gap between stdout lines, in milliseconds. */
   lineDelayMs: number;
-  /** Read stdin to end-of-file and record it. */
   recordStdin: boolean;
   /** Regex source; only matching commands run the behaviour. */
   pattern?: string;

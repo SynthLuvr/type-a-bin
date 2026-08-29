@@ -14,9 +14,6 @@ import type { MockBehaviourScript } from "./mock-bin-behaviour-runtime.js";
 /** Default life of a mock kept alive on purpose, and of its child. */
 const LIFETIME_MS = 120_000;
 
-/** Suffix of a published record file in the record directory. */
-const RECORD_SUFFIX = ".json";
-
 interface MockBinRecordOptions {
   /**
    * Read stdin to end-of-file and record it as `call.stdin`. Off by
@@ -106,7 +103,6 @@ const toLines = (value: string | readonly string[] | undefined): string[] => {
   return typeof value === "string" ? [value] : [...value];
 };
 
-/** Resolves how long an opt-in lifetime lasts; undefined is opted out. */
 const toLifetimeMs = (
   option: boolean | MockBinLifetimeOptions | undefined,
 ): number | undefined => {
@@ -159,30 +155,22 @@ const prepareBehaviour = async (
   return { code: bootstrapCode(script), recordDir };
 };
 
-/** A record file is created empty to claim its slot, then renamed in. */
-const readCall = (file: string): MockBinCall | undefined => {
-  const content = readFileSync(file, "utf-8");
-  if (content === "") return undefined;
-  return JSON.parse(content) as MockBinCall;
-};
-
 /**
  * Reads the recorded invocations in the order the mock was called: the
- * runtime numbers each record as it claims a slot.
+ * runtime numbers each record as it claims a slot. A claimed-but-empty
+ * slot is skipped, and the `.json` suffix filters out records still
+ * being written to their `.pending` sidecar.
  */
-const readCalls = (recordDir: string): MockBinCall[] => {
-  const files = readdirSync(recordDir)
-    .filter((name) => name.endsWith(RECORD_SUFFIX))
+const readCalls = (recordDir: string): MockBinCall[] =>
+  readdirSync(recordDir)
+    .filter((name) => name.endsWith(".json"))
     .sort(
       (left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10),
-    );
-  const calls: MockBinCall[] = [];
-  for (const file of files) {
-    const call = readCall(path.join(recordDir, file));
-    if (call !== undefined) calls.push(call);
-  }
-  return calls;
-};
+    )
+    .flatMap((name) => {
+      const content = readFileSync(path.join(recordDir, name), "utf-8");
+      return content === "" ? [] : [JSON.parse(content) as MockBinCall];
+    });
 
 /**
  * Turns a cleanup function into the handle a scripted behaviour
