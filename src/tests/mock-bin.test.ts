@@ -164,19 +164,61 @@ describe("mockBin", () => {
   });
 
   it.runIf(process.platform === "win32")(
-    "windows: cleanup restores NODE_OPTIONS and the mock registry",
+    "windows: cleanup restores the mock registry and launcher env",
     async () => {
+      // Vitest reuses worker processes across test files, so start from
+      // a known state instead of trusting a pristine environment.
       const previousNodeOptions = process.env.NODE_OPTIONS;
       const previousMocks = process.env[MOCKS_VAR];
+      delete process.env[MOCKS_VAR];
+      delete process.env.TYPE_A_BIN_NODE_EXE;
+
       const cleanup = await mockBin("testbin", "bash", 'echo "test"');
 
-      expect(process.env.NODE_OPTIONS).not.toBe(previousNodeOptions);
-      expect(process.env[MOCKS_VAR]).not.toBe(previousMocks);
+      // The trampoline launcher carries its plumbing in dedicated
+      // variables; NODE_OPTIONS stays untouched in the default mode.
+      expect(process.env[MOCKS_VAR]).toBeDefined();
+      expect(process.env.TYPE_A_BIN_NODE_EXE).toBe(process.execPath);
+      expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
 
       cleanup();
 
       expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
-      expect(process.env[MOCKS_VAR]).toBe(previousMocks);
+      expect(process.env[MOCKS_VAR]).toBeUndefined();
+      expect(process.env.TYPE_A_BIN_NODE_EXE).toBeUndefined();
+
+      // Leave the worker exactly as this test found it.
+      if (previousMocks === undefined) delete process.env[MOCKS_VAR];
+      else process.env[MOCKS_VAR] = previousMocks;
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "windows: the trampoline escape hatch restores NODE_OPTIONS",
+    async () => {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      const previousMocks = process.env[MOCKS_VAR];
+      delete process.env[MOCKS_VAR];
+      process.env.TYPE_A_BIN_DISABLE_TRAMPOLINE = "1";
+      try {
+        const cleanup = await mockBin("testbin", "bash", 'echo "test"');
+
+        // The legacy hard-link fallback keeps the NODE_OPTIONS preload.
+        expect(process.env.NODE_OPTIONS).not.toBe(previousNodeOptions);
+        expect(process.env[MOCKS_VAR]).toBeDefined();
+
+        const result = spawnSync("testbin", ["hi"], { encoding: "utf-8" });
+        expect(result.stdout).toBe("test\n");
+
+        cleanup();
+
+        expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
+        expect(process.env[MOCKS_VAR]).toBeUndefined();
+      } finally {
+        delete process.env.TYPE_A_BIN_DISABLE_TRAMPOLINE;
+        if (previousMocks === undefined) delete process.env[MOCKS_VAR];
+        else process.env[MOCKS_VAR] = previousMocks;
+      }
     },
   );
 

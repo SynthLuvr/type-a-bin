@@ -1,0 +1,2 @@
+c4e41d4859addd7b9d46939440459251b4823ffa94aea1694f3c637096aece2b  native/bin/win32/x64/type-a-bin-trampoline.exe
+176b83d3b4ccf893eeb7e64a4f00d6284c2d32e58d3edb181a0ec5471c1062e6  native/bin/win32/arm64/type-a-bin-trampoline.exe

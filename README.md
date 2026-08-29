@@ -23,7 +23,9 @@ injecting a mock script into your `PATH`.
   you can use it.
 - **Cross-platform.** The same API works on Linux and Windows.
 - **TypeScript-first.** Full type definitions and overloaded signatures.
-- **Zero dependencies at runtime.** Pure Node.js standard library.
+- **Zero npm runtime dependencies.** Pure Node.js standard library, plus
+  a bundled (checked-in, ~14 KB) Windows launcher for `mockBin` — no
+  native add-ons, nothing compiled at install time.
 
 Type-A-Bin is a Node.js alternative to the npm packages
 [mock-bin](https://github.com/stevemao/mock-bin) and
@@ -256,9 +258,10 @@ working directory outside your package (a temp dir, a fixture store),
 where a bare `node --import tsx` cannot resolve `tsx` and the mock would
 die on a module-not-found error. The shorthand resolves the loader once,
 from the script’s own package first and Type-A-Bin’s installed location
-second, and embeds the result. On Windows the same URL rides along in
-`NODE_OPTIONS` for the in-process shim. When tsx is not installed at
-all, Node’s native type stripping parses erasable TypeScript instead.
+second, and embeds the result. On Windows the trampoline bootstrap
+imports the same URL before loading a `.ts` entry. When tsx is not
+installed at all, Node’s native type stripping parses erasable
+TypeScript instead.
 
 This works with any language and any file extension:
 
@@ -624,11 +627,12 @@ serving the last snapshot after cleanup.
 
 Copies an environment without the mock registry, for spawns that must
 not be intercepted. Inside a mock, a child spawned with the inherited
-environment re-enters the interception machinery — on Windows the mock
-*is* a renamed `node.exe`, so `process.execPath` resolves to the shim
+environment can re-enter the interception machinery — on Windows a spawn
+through a legacy hard-link shim resolves `process.execPath` to the shim
 itself. Passing `withoutMocks(process.env)` as the child’s `env` leaves
-the preload loaded but inert: it finds no registry and lets the child
-run untouched.
+any preload inert (it finds no registry), and a trampoline-launched mock
+handed such an environment forwards the invocation to the real binary
+instead of the mock.
 
 ``` ts
 import { spawn } from "node:child_process";
@@ -776,7 +780,10 @@ library lives at the root; additional packages live under `packages/`:
   library
 - On Windows: [Git for Windows](https://gitforwindows.org/) — its bash
   powers bash-interpreter mocks (node-interpreter mocks need nothing
-  beyond Node itself)
+  beyond Node itself). The `mockBin` launcher itself is bundled in the
+  package (`dist/native/win32`), rebuilt and checksum-verified from
+  `native/trampoline.c` in CI — no compiler or download is needed at
+  install time.
 
 ## Scripts
 
@@ -869,24 +876,42 @@ extensionless `#!` scripts — and Node refuses to spawn `.cmd`/`.bat`
 shims without a shell — the implementation swaps the mechanism, not the
 contract:
 
-- Each mock binary is a **hard link of `node.exe`** named `<bin>.exe`
-  (copied if the temp directory is on another volume), prepended to
-  `PATH` exactly as on Linux.
-- A small **preload** is registered through `NODE_OPTIONS --import` in
-  every spawned process. It detects that the process was started as a
-  mock shim (its first CLI argument is not a real file), then swaps the
-  entry for your mock script — argv, stdin, stdout, stderr, and exit
-  codes all pass through.
-- Node-interpreter mocks (and `node --import tsx` script files) run
-  **in-process** through loader hooks; other interpreters (`bash`,
-  `python`, …) are resolved from `PATH` and spawned with your script and
-  the original arguments. Script files using the interpreter-inference
-  shorthand work the same way: the tsx loader is resolved to an absolute
-  URL and prepended in `NODE_OPTIONS` ahead of the preload.
-- The `mock-a-bin-run-original` helper, `pattern` conditionals, output
-  shorthand, script files, and cleanup contract all behave as on Linux.
-  Cleanup additionally restores `NODE_OPTIONS` and the internal mock
-  registry.
+- Each mock binary is a **copy of a tiny trampoline launcher**
+  (`type-a-bin-trampoline.exe`, built from
+  [`native/trampoline.c`](native/trampoline.c)) named `<bin>.exe`,
+  prepended to `PATH` exactly as on Linux.
+- The trampoline starts the real Node executable with a small
+  **bootstrap script** as Node’s script argument, passing the invoked
+  mock executable and the caller’s original arguments after it. A real
+  script occupies Node’s first positional slot, so every original
+  argument — including leading flags (`gh --version`), embedded quotes,
+  line breaks, trailing backslashes, and Unicode — arrives in the mock’s
+  `process.argv` exactly as the caller passed it. No shell and no Node
+  option parser sits in between.
+- The bootstrap dispatches through the same runtime the library uses
+  everywhere: node-interpreter mocks (and TypeScript script files,
+  loaded through the tsx loader URL) run **in-process** with
+  `process.argv` rewritten to `[node, entry, ...args]`; other
+  interpreters (`bash`, `python`, …) are resolved from `PATH` and
+  spawned with your script and the original arguments.
+- The launcher inherits stdin/stdout/stderr, the environment, and the
+  working directory, propagates the mock’s exit code, and starts the
+  mock inside a Windows Job Object — killing the process you spawned
+  reaps the mock and its descendants, while a mock that finishes
+  normally releases descendants it deliberately left behind.
+- Inside a mock, `process.execPath` is the real Node executable, and
+  unrelated Node children spawned during the test no longer carry a
+  preload: nothing is injected into `NODE_OPTIONS`.
+- The `mock-a-bin-run-original` helper, `pattern` conditionals (both
+  flag-first), output shorthand, script files, and cleanup contract all
+  behave as on Linux. Cleanup removes the launcher, bootstrap, and
+  scripts with the same retry semantics as before.
+
+A legacy mechanism — a hard link of `node.exe` plus a `NODE_OPTIONS`
+preload that redirects the shim’s entry — ships as a temporary escape
+hatch: set `TYPE_A_BIN_DISABLE_TRAMPOLINE=1` to force it while the
+launcher rollout is validated. It cannot support flag-first CLIs,
+because Node parses a leading option before the preload runs.
 
 Requirements and behaviour notes:
 
@@ -894,36 +919,31 @@ Requirements and behaviour notes:
   native `bash.exe` (Git Bash) over WSL’s launcher, which cannot run
   Windows-path scripts; well-known Git install locations are probed as a
   fallback.
-- **The first CLI argument must be positional.** A shim *is* `node.exe`,
-  so a leading flag (`gh --version`) is consumed by Node’s own option
-  parser before the mock can intercept it. Prefer the subcommand form
-  (`gh version`), or wrap the flag behind a positional subcommand.
 - **Pass-through needs a real `.exe`.** `mock-a-bin-run-original` and
   pattern fall-through locate and spawn the original binary directly;
   `.cmd`/`.bat`-only binaries (e.g. `npm.cmd`) cannot be spawned by Node
-  without a shell.
+  without a shell. (That limitation is about the *real* binary; the
+  mock’s own argv is always forwarded verbatim.)
 - **The output shorthand expands `$1`–`$9`, `$*`, and `$@`** from the
   command line (matching bash `echo` for positional parameters); other
   shell substitutions are printed literally.
 - **Stacked mocks clean up last-in, first-out.** Like `PATH`, the mock
-  registry and `NODE_OPTIONS` are snapshot-restored, so call the cleanup
-  functions in reverse order of the `mockBin` calls for a full restore.
+  registry is snapshot-restored, so call the cleanup functions in
+  reverse order of the `mockBin` calls for a full restore.
 
-`NODE_OPTIONS` is process environment, not global state: it only affects
-processes spawned while mocks are active, and the preload is inert for
-any process that is not a mock shim. Two escapes cover children spawned
-from inside a mock: eval/print runs (`-e`, `--eval`, `-p`, `--print`)
-carry their program in `execArgv` and have no entry to redirect, so they
-are never intercepted; and a spawn whose environment was built with
-[`withoutMocks(process.env)`](#withoutmocksenv) carries no registry,
-leaving the preload nothing to redirect.
+The mock registry (`TYPE_A_BIN_MOCKS`) and the launcher’s Node
+executable (`TYPE_A_BIN_NODE_EXE`) are process environment, not global
+state: they only affect processes spawned while mocks are active.
+Children spawned from inside a mock escape interception on their own —
+[`withoutMocks(process.env)`](#withoutmocksenv) remains for spawns that
+must reach the real binary behind a mock.
 
 ## Comparison with other tools
 
 | Feature | Type-A-Bin | [mock-bin](https://github.com/stevemao/mock-bin) | [mock-a-bin](https://github.com/levibostian/mock-a-bin) |
 |----|:--:|:--:|:--:|
 | Mocks any binary via `PATH` | ✅ | ✅ | ✅ |
-| Runtime dependencies | 0 | several | several (Deno) |
+| Runtime dependencies | 0 npm (bundled Windows launcher) | several | several (Deno) |
 | TypeScript types & overloads | ✅ | ❌ | partial |
 | Output shorthand | ✅ | ❌ | ❌ |
 | Script-file mode (keeps extension) | ✅ | ❌ | ❌ |

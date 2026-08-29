@@ -22,7 +22,7 @@
     "node": "==26"
   },
   "scripts": {
-    "build:lib": "del-cli dist && tsc && del-cli dist/tests",
+    "build:lib": "del-cli dist && tsc && del-cli dist/tests && node scripts/copy-native.mjs",
     "build": "pnpm build:lib && pnpm -r build",
     "format": "ts-canon format",
     "lint": "ts-canon lint",

@@ -3,12 +3,13 @@ import { vitestPreset } from "ts-canon/presets/vitest";
 // The library splits its implementation by platform: mock-bin.ts writes
 // POSIX shims, mock-bin-windows.ts is the Windows twin, and the active
 // one is chosen at runtime — each OS can only execute its own half.
-// mock-bin-preload.ts runs inside spawned child processes (via
-// NODE_OPTIONS) and mock-bin-behaviour-runtime.ts inside the mocked
-// binary itself — both invisible to this process's v8 coverage.
-// index.ts is a pure re-export barrel, exercised end-to-end by the
-// bin-test workspace package. None of those can meet the gate; the rest
-// must.
+// mock-bin-runtime.ts runs inside spawned child processes (behind the
+// trampoline bootstrap or the NODE_OPTIONS preload) and
+// mock-bin-behaviour-runtime.ts inside the mocked binary itself — both
+// invisible to this process's v8 coverage. The preload module is its
+// thin entry point. index.ts is a pure re-export barrel, exercised
+// end-to-end by the bin-test workspace package. None of those can meet
+// the gate; the rest must.
 const inactiveTwin =
   process.platform === "win32" ? "src/mock-bin.ts" : "src/mock-bin-windows.ts";
 
@@ -23,6 +24,7 @@ const config = vitestPreset({
       "src/index.ts",
       "src/mock-bin-behaviour-runtime.ts",
       "src/mock-bin-preload.ts",
+      "src/mock-bin-runtime.ts",
       inactiveTwin,
     ],
     thresholds: {

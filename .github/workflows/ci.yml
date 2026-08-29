@@ -26,6 +26,27 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Rebuild the Windows trampoline launchers and verify checksums
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -sSL -o "$RUNNER_TEMP/llvm-mingw.zip" \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/20260812/llvm-mingw-20260812-ucrt-x86_64.zip
+          unzip -q "$RUNNER_TEMP/llvm-mingw.zip" -d "$RUNNER_TEMP"
+          native/build-trampolines.sh "$RUNNER_TEMP/llvm-mingw-20260812-ucrt-x86_64/bin"
+          sha256sum -c native/checksums.txt
+
+      - name: Rebuild the Windows trampoline launchers and verify checksums (linux toolchain)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          curl -sSL -o "$RUNNER_TEMP/llvm-mingw.tar.xz" \
+            https://github.com/mstorsjo/llvm-mingw/releases/download/20260812/llvm-mingw-20260812-ucrt-ubuntu-22.04-x86_64.tar.xz
+          tar -xJf "$RUNNER_TEMP/llvm-mingw.tar.xz" -C "$RUNNER_TEMP"
+          native/build-trampolines.sh "$RUNNER_TEMP/llvm-mingw-20260812-ucrt-ubuntu-22.04-x86_64/bin"
+          sha256sum -c native/checksums.txt
+
       - name: Install pandoc on Linux (pinned for Markdown lint/format)
         if: runner.os == 'Linux'
         run: |
