@@ -11,3 +11,4 @@ export {
   type MockBinLifetimeOptions,
   type MockBinRecordOptions,
 } from "./mock-bin-behaviour.js";
+export { MOCKS_VAR, withoutMocks } from "./mock-bin-env.js";

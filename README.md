@@ -56,6 +56,7 @@ fully typed, dependency-free library with richer features.
 - [Using with a test runner](#using-with-a-test-runner)
 - [API reference](#api-reference)
   - [`mockBin(...)`](#mockbin)
+  - [`withoutMocks(env)`](#withoutmocksenv)
   - [Types](#types)
 - [Packages](#packages)
 - [Prerequisites](#prerequisites)
@@ -618,6 +619,30 @@ function, extended with a `calls` property holding every recorded
 invocation in call order. `calls` is read fresh on each access and keeps
 serving the last snapshot after cleanup.
 
+### `withoutMocks(env)`
+
+Copies an environment without the mock registry, for spawns that must
+not be intercepted. Inside a mock, a child spawned with the inherited
+environment re-enters the interception machinery — on Windows the mock
+*is* a renamed `node.exe`, so `process.execPath` resolves to the shim
+itself. Passing `withoutMocks(process.env)` as the child’s `env` leaves
+the preload loaded but inert: it finds no registry and lets the child
+run untouched.
+
+``` ts
+import { spawn } from "node:child_process";
+import { withoutMocks } from "type-a-bin";
+
+const child = spawn(
+  process.execPath,
+  ["-e", 'setTimeout(() => console.log("helper ran"), 1000)'],
+  { env: withoutMocks(process.env) },
+);
+```
+
+The registry variable’s name is exported as `MOCKS_VAR`, so callers that
+need to read or strip the registry never hardcode it.
+
 ### Types
 
 ``` ts
@@ -867,7 +892,12 @@ Requirements and behaviour notes:
 
 `NODE_OPTIONS` is process environment, not global state: it only affects
 processes spawned while mocks are active, and the preload is inert for
-any process that is not a mock shim.
+any process that is not a mock shim. Two escapes cover children spawned
+from inside a mock: eval/print runs (`-e`, `--eval`, `-p`, `--print`)
+carry their program in `execArgv` and have no entry to redirect, so they
+are never intercepted; and a spawn whose environment was built with
+[`withoutMocks(process.env)`](#withoutmocksenv) carries no registry,
+leaving the preload nothing to redirect.
 
 ## Comparison with other tools
 

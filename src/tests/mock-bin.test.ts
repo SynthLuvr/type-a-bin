@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { mockBin } from "../mock-bin.js";
+import { MOCKS_VAR } from "../mock-bin-env.js";
 
 /** Creates a temp script file, mocks `testbin` to run it, returns stdout. */
 const runScriptFile = async (options: {
@@ -166,16 +167,16 @@ describe("mockBin", () => {
     "windows: cleanup restores NODE_OPTIONS and the mock registry",
     async () => {
       const previousNodeOptions = process.env.NODE_OPTIONS;
-      const previousMocks = process.env.TYPE_A_BIN_MOCKS;
+      const previousMocks = process.env[MOCKS_VAR];
       const cleanup = await mockBin("testbin", "bash", 'echo "test"');
 
       expect(process.env.NODE_OPTIONS).not.toBe(previousNodeOptions);
-      expect(process.env.TYPE_A_BIN_MOCKS).not.toBe(previousMocks);
+      expect(process.env[MOCKS_VAR]).not.toBe(previousMocks);
 
       cleanup();
 
       expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
-      expect(process.env.TYPE_A_BIN_MOCKS).toBe(previousMocks);
+      expect(process.env[MOCKS_VAR]).toBe(previousMocks);
     },
   );
 

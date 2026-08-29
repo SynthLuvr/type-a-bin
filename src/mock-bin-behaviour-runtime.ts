@@ -14,7 +14,7 @@ import type { MockBinCall } from "./mock-bin-behaviour.js";
 // the shim on Windows — so it must stay free of runtime imports beyond
 // node's own modules. mock-bin-behaviour compiles a MockBinBehaviour
 // into the script below and the mock hands it straight back here.
-// The registry env var must stay in sync with mock-bin-windows.
+// The registry env var must stay in sync with mock-bin-env.
 const MOCKS_VAR = "TYPE_A_BIN_MOCKS";
 
 const WINDOWS_EXTENSIONS = ["", ".exe", ".cmd", ".bat", ".com"];

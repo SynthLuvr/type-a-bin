@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { MockBinScriptFile } from "./mock-bin.js";
+import { MOCKS_VAR } from "./mock-bin-env.js";
 import type { MocksEnv, MockTarget } from "./mock-bin-preload.js";
 import { resolveTsxImportUrl } from "./mock-bin-tsx.js";
 
@@ -14,9 +15,9 @@ import { resolveTsxImportUrl } from "./mock-bin-tsx.js";
 // mock is a hard link of node.exe named <bin>.exe, and a preload
 // (mock-bin-preload) registered through NODE_OPTIONS turns a spawn of
 // that exe into the mock script — argv, stdin, stdout, stderr, and exit
-// codes all pass through. The registry the preload reads (and its env
-// var name) must stay in sync with mock-bin-preload.
-const MOCKS_VAR = "TYPE_A_BIN_MOCKS";
+// codes all pass through. The registry travels in the env var named by
+// MOCKS_VAR; the preload keeps its own copy of the name, so the two
+// must stay in sync.
 const HELPER_NAME = "mock-a-bin-run-original";
 
 // The preload ships next to this module: mock-bin-preload.js in the
