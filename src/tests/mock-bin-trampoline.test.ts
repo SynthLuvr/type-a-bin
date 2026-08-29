@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -214,7 +214,6 @@ describe("windows trampoline launcher", () => {
     async () => {
       const capture = capturePath("ts");
       const script = path.join(captureDir, "mock.ts");
-      const { writeFile } = await import("node:fs/promises");
       await writeFile(
         script,
         `import { writeFileSync } from "node:fs";

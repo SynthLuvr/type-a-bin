@@ -215,11 +215,13 @@ describe("runTrampoline", () => {
   });
 
   it("dispatches the run-original helper with flag-first argv", async () => {
-    const env = registryWith({});
-    env[MOCKS_VAR] = JSON.stringify({
-      targets: {},
-      runOriginal: { binName: "git", originalPath: process.env.PATH ?? "" },
-    });
+    const env = {
+      ...process.env,
+      [MOCKS_VAR]: JSON.stringify({
+        targets: {},
+        runOriginal: { binName: "git", originalPath: process.env.PATH ?? "" },
+      }),
+    };
 
     const result = runTrampoline(
       path.join(dir, "mock-a-bin-run-original.exe"),

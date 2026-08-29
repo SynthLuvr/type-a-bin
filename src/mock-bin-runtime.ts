@@ -57,6 +57,9 @@ interface LoadableModule {
   _load: (request: string, parent: unknown, isMain: boolean) => unknown;
 }
 
+/** How an entry point loads a node-kind target once dispatch picks it. */
+type RunNodeEntry = (entry: string, cliArgs: string[]) => Promise<void> | void;
+
 const readMocks = (): MocksEnv => {
   try {
     return JSON.parse(process.env[MOCKS_VAR] ?? "{}") as MocksEnv;
@@ -101,14 +104,22 @@ const pathCandidates = (name: string, dirs: string[]): string[] => {
 const findExecutable = (name: string, dirs: string[]): string | null =>
   pathCandidates(name, dirs)[0] ?? null;
 
-const spawnRealAndExit = (command: string, args: string[]): never => {
-  // The real binary must not be re-intercepted by a shim preload.
-  delete process.env[MOCKS_VAR];
+// Runs a resolved command with the caller's stdio and exits with its
+// status; a failed spawn exits 127.
+const spawnAndExit = (
+  command: string,
+  args: string[],
+  errorPrefix: string,
+): never => {
   const result = spawnSync(command, args, { stdio: "inherit" });
   if (result.error !== undefined)
-    writeError(`Error: '${command}' failed to start: ${String(result.error)}`);
+    writeError(`${errorPrefix}: ${String(result.error)}`);
   process.exit(result.status ?? 127);
 };
+
+// The real binary must not be re-intercepted by a shim preload.
+const spawnRealAndExit = (command: string, args: string[]): never =>
+  spawnAndExit(command, args, `Error: '${command}' failed to start`);
 
 const runOriginalCommand = (
   spec: RunOriginalTarget | undefined,
@@ -180,14 +191,11 @@ const runInterpreterAndExit = (
   const interpreterPath = resolveInterpreter(interpreter);
   if (interpreterPath === null)
     return fail(`Error: Interpreter '${interpreter}' not found in PATH`);
-  const result = spawnSync(interpreterPath, [entry, ...cliArgs], {
-    stdio: "inherit",
-  });
-  if (result.error !== undefined)
-    writeError(
-      `Error: Interpreter '${interpreter}' failed: ${String(result.error)}`,
-    );
-  process.exit(result.status ?? 127);
+  return spawnAndExit(
+    interpreterPath,
+    [entry, ...cliArgs],
+    `Error: Interpreter '${interpreter}' failed`,
+  );
 };
 
 // tsx registers its CommonJS hooks from a separate entry point; load it
@@ -222,13 +230,18 @@ const isEvalRun = (execArgv: string[]): boolean =>
 const asPath = (specifier: string): string =>
   specifier.startsWith("file:") ? fileURLToPath(specifier) : specifier;
 
-const redirectNodeEntry = (entry: string, cliArgs: string[]): void => {
-  // Node normalizes the CLI entry to an absolute path in argv[1] before
-  // preloads run. Capture it, then reposition argv so the mock sees the
-  // CLI arguments at process.argv.slice(2) like a real Node CLI script.
-  const originalEntry = process.argv[1] ?? "";
+// Repositions argv to [node, entry, ...cliArgs] so the mock reads its
+// CLI arguments at process.argv.slice(2) like a real Node CLI script.
+const setArgvEntry = (entry: string, cliArgs: string[]): void => {
   process.argv.length = 1;
   process.argv.push(entry, ...cliArgs);
+};
+
+const redirectNodeEntry = (entry: string, cliArgs: string[]): void => {
+  // Capture the CLI entry before repositioning argv: node normalized it
+  // to an absolute path, and the redirects below must recognize it.
+  const originalEntry = process.argv[1] ?? "";
+  setArgvEntry(entry, cliArgs);
 
   // ESM main entry: resolve hooks see the main module with no parent URL,
   // so redirect that one resolution to the mock script. The tsx loader
@@ -262,8 +275,7 @@ const runEntryDirectly = async (
   entry: string,
   cliArgs: string[],
 ): Promise<void> => {
-  process.argv.length = 1;
-  process.argv.push(entry, ...cliArgs);
+  setArgvEntry(entry, cliArgs);
   await import(pathToFileURL(entry).href);
   // An import settles when the entry's top level finishes — before the
   // output of a mock that defers work (timers, stdin). Node would start
@@ -280,20 +292,17 @@ const runEntryDirectly = async (
  * Runs a node-kind mock entry as the process's main module from the
  * trampoline bootstrap. Unlike a shim, the process already has a real
  * main module (the bootstrap itself), so there is no REPL to avoid and
- * no entry redirection needed: argv is rewritten to
- * `[node, entry, ...args]` and the entry is loaded directly.
- * CommonJS entries load through `Module._load` with `isMain` set, so
- * `require.main` matches a script started as `node entry.cjs`; other
- * entries load as ESM, with tsx registered first when the target
- * carries a loader URL.
+ * no entry redirection needed. CommonJS entries load through
+ * `Module._load` with `isMain` set, so `require.main` matches a script
+ * started as `node entry.cjs`; other entries load as ESM, with tsx
+ * registered first when the target carries a loader URL.
  */
 const runNodeEntryAsMain = async (
   entry: string,
   cliArgs: string[],
   tsxImportUrl: string | undefined,
 ): Promise<void> => {
-  process.argv.length = 1;
-  process.argv.push(entry, ...cliArgs);
+  setArgvEntry(entry, cliArgs);
 
   if (extname(entry).toLowerCase() === ".cjs") {
     const moduleApi = Module as unknown as LoadableModule;
@@ -303,6 +312,29 @@ const runNodeEntryAsMain = async (
 
   if (tsxImportUrl !== undefined) await import(tsxImportUrl);
   await import(pathToFileURL(entry).href);
+};
+
+// Dispatch shared by both entry points: a pattern miss hands the
+// invocation to the real binary, non-node targets run through their
+// interpreter, and node targets load however the entry point chooses.
+const dispatchTarget = async (
+  target: MockTarget,
+  invokedName: string,
+  cliArgs: string[],
+  runNodeEntry: RunNodeEntry,
+): Promise<void> => {
+  const commandLine = `${invokedName} ${cliArgs.join(" ")}`;
+  const mocked =
+    target.pattern === undefined ||
+    new RegExp(target.pattern).test(commandLine);
+  if (!mocked) return runRealBinary(invokedName, cliArgs, target.originalPath);
+  if (target.kind !== "node")
+    return runInterpreterAndExit(
+      target.interpreter ?? "bash",
+      target.entry,
+      cliArgs,
+    );
+  return runNodeEntry(target.entry, cliArgs);
 };
 
 // Basename without the executable extension: mock-a-bin-run-original.exe
@@ -323,27 +355,18 @@ const runTrampoline = async (): Promise<void> => {
   const args = process.argv.slice(3);
   const invokedName = toInvokedName(invokedExe);
 
-  if (invokedName === HELPER_NAME)
-    return runOriginalCommand(readMocks().runOriginal, args);
-
   const mocks = readMocks();
+  if (invokedName === HELPER_NAME)
+    return runOriginalCommand(mocks.runOriginal, args);
+
   const target = mocks.targets?.[invokedName];
-  // No registry (e.g. a spawn through withoutMocks) must not land in a
-  // REPL or a crash: hand the invocation to the real binary.
+  // No registry entry (e.g. a spawn through withoutMocks) must not land
+  // in a REPL or a crash: hand the invocation to the real binary.
   if (target === undefined) return runRealBinary(invokedName, args, undefined);
 
-  const commandLine = `${invokedName} ${args.join(" ")}`;
-  const mocked =
-    target.pattern === undefined ||
-    new RegExp(target.pattern).test(commandLine);
-  if (!mocked) return runRealBinary(invokedName, args, target.originalPath);
-  if (target.kind !== "node")
-    return runInterpreterAndExit(
-      target.interpreter ?? "bash",
-      target.entry,
-      args,
-    );
-  return runNodeEntryAsMain(target.entry, args, target.tsxImportUrl);
+  return dispatchTarget(target, invokedName, args, (entry, cliArgs) =>
+    runNodeEntryAsMain(entry, cliArgs, target.tsxImportUrl),
+  );
 };
 
 /**
@@ -364,29 +387,22 @@ const interceptShim = async (): Promise<void> => {
       : [denormalizeEntry(process.argv[1] ?? ""), ...process.argv.slice(2)];
 
   if (isEvalRun(process.execArgv)) return;
+  const mocks = readMocks();
   if (invokedName === HELPER_NAME)
-    return runOriginalCommand(readMocks().runOriginal, cliArgs);
-  const target = readMocks().targets?.[invokedName];
+    return runOriginalCommand(mocks.runOriginal, cliArgs);
+  const target = mocks.targets?.[invokedName];
   if (target === undefined) return;
   // A process whose CLI entry is a real file is not a shim: mock scripts
   // spawned through process.execPath (tsx's esbuild service, `node -e`
   // helpers) inherit the shim exe's name, but their entry exists on
   // disk while a shim's "subcommand" entry never does.
   if (isFile(process.argv[1] ?? "")) return;
-  const commandLine = `${invokedName} ${cliArgs.join(" ")}`;
-  const mocked =
-    target.pattern === undefined ||
-    new RegExp(target.pattern).test(commandLine);
-  if (!mocked) return runRealBinary(invokedName, cliArgs, target.originalPath);
-  if (target.kind !== "node")
-    return runInterpreterAndExit(
-      target.interpreter ?? "bash",
-      target.entry,
-      cliArgs,
-    );
-  if (process.argv[1] === undefined)
-    return runEntryDirectly(target.entry, cliArgs);
-  return redirectNodeEntry(target.entry, cliArgs);
+  return dispatchTarget(
+    target,
+    invokedName,
+    cliArgs,
+    process.argv[1] === undefined ? runEntryDirectly : redirectNodeEntry,
+  );
 };
 
 export {
