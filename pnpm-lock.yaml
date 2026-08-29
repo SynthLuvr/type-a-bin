@@ -18,8 +18,8 @@ importers:
         specifier: ^7.0.0
         version: 7.0.0
       ts-canon:
-        specifier: ^0.1.1
-        version: 0.1.1
+        specifier: ^0.1.2
+        version: 0.1.2
       tsx:
         specifier: ^4.23.12
         version: 4.23.12
@@ -1256,8 +1256,8 @@ packages:
     resolution: {integrity: sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ==}
     engines: {node: '>=8.0'}
 
-  ts-canon@0.1.1:
-    resolution: {integrity: sha512-5Y1ihWnDJT3/7ENr8eQUxl1OjPbfikAVQwOiuXWhXZFUu3lS51aHZEDq0Tmlh6mDGAuUC7euUOgR1U7UgXJG4g==}
+  ts-canon@0.1.2:
+    resolution: {integrity: sha512-PF3ZjVcI0bCXoBY5MET0Ugi5WUktgvXAIUyMZ49nez1BvwdfFXNzoPrlUBoqHq4Hc4InGwCDud16YPYp/KrQzA==}
     engines: {node: '>=24'}
     hasBin: true
 
@@ -2261,7 +2261,7 @@ snapshots:
     dependencies:
       is-number: 7.0.0
 
-  ts-canon@0.1.1:
+  ts-canon@0.1.2:
     dependencies:
       '@ast-grep/cli': 0.45.2
       '@biomejs/biome': 2.5.10
