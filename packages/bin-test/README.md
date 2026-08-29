@@ -33,7 +33,8 @@ whole repo lives at the root (`pnpm build`, `pnpm test`).
 
 ## Coding Conventions
 
-Enforced by the repo-root toolchain (Biome, oxlint, ast-grep, pandoc):
+Enforced by the repo-root toolchain (ts-canon: Biome, oxlint, ast-grep,
+pandoc):
 
 - Arrow functions only — no `function` declarations
 - Separate exports — no inline `export` keywords

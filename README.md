@@ -540,9 +540,10 @@ library lives at the root; additional packages live under `packages/`:
 
 - [Node.js](https://nodejs.org) 26 and [pnpm](https://pnpm.io) (enforced
   via `engines` in `package.json`)
-- [pandoc](https://pandoc.org) ≥ 3.10 — only needed for Markdown
-  formatting/linting (`pnpm lint:md` / `pnpm format:md`), not for using
-  the library
+- [pandoc](https://pandoc.org) ≥ 3.10 — only needed for the Markdown
+  steps of `pnpm lint` / `pnpm format` (which run through
+  [ts-canon](https://github.com/SynthLuvr/ts-canon)), not for using the
+  library
 - On Windows: [Git for Windows](https://gitforwindows.org/) — its bash
   powers bash-interpreter mocks (node-interpreter mocks need nothing
   beyond Node itself)
@@ -555,8 +556,8 @@ Run from the repository root:
 |----|----|
 | `pnpm build` | Build the library (and workspace packages) to `dist/` |
 | `pnpm test` | Build, run unit tests, then run workspace tests |
-| `pnpm lint` | Run all linters (Biome, oxlint, ast-grep, pandoc, audit, jscpd) |
-| `pnpm format` | Run all formatters with auto-fix |
+| `pnpm lint` | Run all linters via ts-canon (Biome, oxlint, ast-grep, pandoc, peer-deps, audit, jscpd) |
+| `pnpm format` | Run all formatters via ts-canon with auto-fix |
 | `pnpm test:watch` | Run unit tests in watch mode |
 
 ## Releasing
