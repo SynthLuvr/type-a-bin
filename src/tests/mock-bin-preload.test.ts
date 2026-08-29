@@ -10,18 +10,15 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MOCKS_VAR, withoutMocks } from "../mock-bin-env.js";
 
 // Exercises the preload the way mockBin installs it on Windows: a shim
 // executable (a link of node named like the mocked bin) plus the mock
-// registry in the environment. The preload is plain TypeScript that
-// imports builtins only, so node loads the .ts form directly and the
-// suite runs on every platform.
-const preloadUrl = pathToFileURL(
-  fileURLToPath(new URL("../mock-bin-preload.ts", import.meta.url)),
-).href;
+// registry in the environment. The preload imports builtins only, so
+// node loads the .ts form directly and the suite runs on every
+// platform.
+const preloadUrl = new URL("../mock-bin-preload.ts", import.meta.url).href;
 const shimName = process.platform === "win32" ? "testbin.exe" : "testbin";
 
 let dir: string;
@@ -46,15 +43,14 @@ beforeAll(async () => {
       testbin: { kind: "node", entry, originalPath: process.env.PATH ?? "" },
     },
   };
-  const imports = [`--import ${preloadUrl}`];
+  const importOption = `--import ${preloadUrl}`;
   const previousNodeOptions = process.env.NODE_OPTIONS;
   shimEnv = {
     ...process.env,
     [MOCKS_VAR]: JSON.stringify(registry),
-    NODE_OPTIONS:
-      previousNodeOptions === undefined || previousNodeOptions === ""
-        ? imports.join(" ")
-        : `${imports.join(" ")} ${previousNodeOptions}`,
+    NODE_OPTIONS: previousNodeOptions
+      ? `${importOption} ${previousNodeOptions}`
+      : importOption,
   };
 });
 
@@ -72,29 +68,20 @@ describe("mock-bin-preload", () => {
     expect(result.stdout).toBe("preload mock ran\n");
   });
 
-  it("runs -e snippets instead of the mock", () => {
-    const result = runShim(["-e", 'console.log("eval ran")']);
+  it.each([
+    { flag: "-e", args: ["-e", 'console.log("eval ran")'], out: "eval ran" },
+    {
+      flag: "--eval=",
+      args: ["--eval=console.log('eval= ran')"],
+      out: "eval= ran",
+    },
+    { flag: "-p", args: ["-p", '"print ran"'], out: "print ran" },
+    { flag: "--print", args: ["--print", '"print ran"'], out: "print ran" },
+  ])("runs $flag snippets instead of the mock", ({ args, out }) => {
+    const result = runShim(args);
 
-    expect(result.stdout).toBe("eval ran\n");
+    expect(result.stdout).toBe(`${out}\n`);
     expect(result.stderr).toBe("");
-  });
-
-  it("runs --eval= snippets instead of the mock", () => {
-    const result = runShim(["--eval=console.log('eval= ran')"]);
-
-    expect(result.stdout).toBe("eval= ran\n");
-  });
-
-  it("runs -p snippets instead of the mock", () => {
-    const result = runShim(["-p", '"print ran"']);
-
-    expect(result.stdout).toBe("print ran\n");
-  });
-
-  it("runs --print snippets instead of the mock", () => {
-    const result = runShim(["--print", '"print ran"']);
-
-    expect(result.stdout).toBe("print ran\n");
   });
 
   it("does not intercept --print= runs", () => {

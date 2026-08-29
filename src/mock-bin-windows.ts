@@ -16,8 +16,8 @@ import { resolveTsxImportUrl } from "./mock-bin-tsx.js";
 // (mock-bin-preload) registered through NODE_OPTIONS turns a spawn of
 // that exe into the mock script — argv, stdin, stdout, stderr, and exit
 // codes all pass through. The registry travels in the env var named by
-// MOCKS_VAR (shared from mock-bin-env); the preload keeps its own copy
-// of the name, so the two must stay in sync.
+// MOCKS_VAR; the preload keeps its own copy of the name, so the two
+// must stay in sync.
 const HELPER_NAME = "mock-a-bin-run-original";
 
 // The preload ships next to this module: mock-bin-preload.js in the

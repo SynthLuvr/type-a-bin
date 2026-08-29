@@ -3,8 +3,7 @@ const MOCKS_VAR = "TYPE_A_BIN_MOCKS";
 // The mock registry travels from mockBin to the preload in this env
 // var. mock-bin-preload keeps its own copy of the name — it runs as a
 // standalone script inside child processes and cannot import library
-// code — so the two must stay in sync (mock-bin-windows imports the
-// constant from here).
+// code — so the two must stay in sync.
 
 /**
  * Copies an environment without the mock registry.
