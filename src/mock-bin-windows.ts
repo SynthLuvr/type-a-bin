@@ -74,8 +74,8 @@ const interpreterExecutableName = (word: string | undefined): string =>
   word === undefined ? "bash" : basenameWithoutExecutableExtension(word);
 
 // A `--import` word names tsx when it is the bare package ("tsx",
-// "tsx/cjs") or resolves into it — the script-file shorthand embeds an
-// absolute loader URL so its mock runs from any working directory.
+// "tsx/cjs") or a file URL resolving into it — the script-file
+// shorthand embeds an absolute loader URL.
 const isTsxImport = (word: string): boolean => {
   if (word === "tsx" || word.startsWith("tsx/")) return true;
   if (!word.startsWith("file:")) return false;
@@ -85,8 +85,6 @@ const isTsxImport = (word: string): boolean => {
     return false;
   }
 };
-
-const usesTsx = (words: string[]): boolean => words.some(isTsxImport);
 
 const toShebangLine = (interpreter: string): string =>
   interpreter.startsWith("#!") ? interpreter : `#!/usr/bin/env ${interpreter}`;
@@ -179,14 +177,15 @@ const mockBinWindows = async (
     runOriginal: { binName: binBase, originalPath },
   });
 
-  // The preload rides along after the tsx loader when the interpreter
-  // names it, so .ts entries resolve through tsx's ESM hooks in the
-  // same resolve chain that redirects the shim entry. Without tsx the
-  // import is skipped and node's native type stripping applies.
+  // The tsx loader rides ahead of the preload so .ts entries resolve
+  // through its hooks in the same chain that redirects the shim entry;
+  // without tsx, node's native type stripping applies.
   const scriptFile =
     typeof codeOrScript === "object" ? codeOrScript.file : undefined;
   const tsxImportUrl =
-    isNodeMock && usesTsx(words) ? resolveTsxImportUrl(scriptFile) : null;
+    isNodeMock && words.some(isTsxImport)
+      ? resolveTsxImportUrl(scriptFile)
+      : null;
   const imports = [
     ...(tsxImportUrl === null ? [] : [`--import ${tsxImportUrl}`]),
     `--import ${pathToFileURL(preloadPath).href}`,

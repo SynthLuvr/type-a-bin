@@ -57,6 +57,14 @@ type ResolvedScript = { shebang: string; body: string };
 const toShebangLine = (interpreter: string): string =>
   interpreter.startsWith("#!") ? interpreter : `#!/usr/bin/env ${interpreter}`;
 
+const resolveExistingFile = async (file: string): Promise<string> => {
+  const resolvedFile = path.resolve(file);
+  const stats = await stat(resolvedFile).catch(() => null);
+  if (!stats?.isFile())
+    throw new Error(`mockBin: script file not found: ${file}`);
+  return resolvedFile;
+};
+
 /**
  * Validates the script file exists, then builds an `exec` wrapper that
  * delegates to it through the given interpreter. The file keeps its real
@@ -66,11 +74,7 @@ const resolveScriptFile = async (
   shebang: string,
   { file }: MockBinScriptFile,
 ): Promise<ResolvedScript> => {
-  const resolvedFile = path.resolve(file);
-
-  const stats = await stat(resolvedFile).catch(() => null);
-  if (!stats?.isFile())
-    throw new Error(`mockBin: script file not found: ${file}`);
+  const resolvedFile = await resolveExistingFile(file);
 
   // Accept either a bare interpreter ("node --import tsx") or a full
   // shebang line ("#!/usr/bin/env node"); strip "#!" for the exec line.
@@ -84,38 +88,35 @@ const resolveScriptFile = async (
   };
 };
 
-const NODE_SCRIPT_EXTENSIONS = [".cjs", ".js", ".mjs"];
-
-/** Runtime discriminates the script-file shorthand from a behaviour object. */
+/** Discriminates the script-file shorthand from a behaviour object. */
 const isScriptFile = (
-  value: MockBinBehaviour | MockBinScriptFile,
+  value: string | MockBinBehaviour | MockBinScriptFile,
 ): value is MockBinScriptFile =>
-  "file" in value && typeof value.file === "string";
+  typeof value === "object" &&
+  "file" in value &&
+  typeof value.file === "string";
 
 /**
  * Picks the interpreter for the script-file shorthand from the file's
- * extension. TypeScript runs through the tsx loader resolved to an
- * absolute file URL — so the mock works no matter which working
- * directory it is invoked from — JavaScript through node, and `.sh`
- * through bash; anything else must name its interpreter explicitly.
+ * extension: TypeScript runs through the tsx loader resolved to an
+ * absolute file URL — so the mock works from any working directory —
+ * `.js` through node, `.sh` through bash. Anything else must name its
+ * interpreter explicitly.
  */
 const scriptFileInterpreter = async (
   script: MockBinScriptFile,
 ): Promise<string> => {
-  const resolvedFile = path.resolve(script.file);
-  const stats = await stat(resolvedFile).catch(() => null);
-  if (!stats?.isFile())
-    throw new Error(`mockBin: script file not found: ${script.file}`);
+  const resolvedFile = await resolveExistingFile(script.file);
 
   if (isTypeScriptFile(resolvedFile)) {
     const tsxImportUrl = resolveTsxImportUrl(resolvedFile);
     // Without tsx, node's native type stripping still parses erasable
-    // TypeScript — the same fallback the Windows shim applies.
+    // TypeScript.
     return tsxImportUrl === null ? "node" : `node --import ${tsxImportUrl}`;
   }
 
   const extension = path.extname(resolvedFile).toLowerCase();
-  if (NODE_SCRIPT_EXTENSIONS.includes(extension)) return "node";
+  if ([".cjs", ".js", ".mjs"].includes(extension)) return "node";
   if (extension === ".sh") return "bash";
   throw new Error(
     `mockBin: no interpreter known for '${
@@ -240,10 +241,9 @@ async function mockBin(
       : binNameOrConfig;
   const { binName, pattern } = config;
 
-  // Script-file shorthand: the file's extension picks the interpreter,
-  // including the tsx loader for TypeScript — resolved to an absolute
-  // file URL so the mock runs from any working directory.
-  if (typeof shebangOrOutput === "object" && isScriptFile(shebangOrOutput))
+  // Script-file shorthand: pick the interpreter, then take the explicit
+  // interpreter + script-file path.
+  if (isScriptFile(shebangOrOutput))
     return mockBin(
       config,
       await scriptFileInterpreter(shebangOrOutput),

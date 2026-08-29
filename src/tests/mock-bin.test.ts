@@ -26,7 +26,7 @@ const runScriptFile = async (options: {
       : await mockBin("testbin", options.shebang, { file: scriptPath });
   const result = spawnSync("testbin", options.args ?? [], {
     encoding: "utf-8",
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    cwd: options.cwd,
   });
   cleanup();
   await rm(dir, { recursive: true, force: true });
@@ -533,11 +533,10 @@ describe("mockBin", () => {
 
   describe("script-file shorthand", () => {
     it("runs TypeScript through the tsx loader from any cwd", async () => {
-      // The enum needs a real transform — node's native type stripping
-      // rejects it — and the mock runs from a working directory outside
-      // this package, where a bare `node --import tsx` could not
-      // resolve. Passing proves the shorthand embedded an absolute
-      // loader URL and that tsx actually loaded the script.
+      // The enum needs a real transform (native type stripping rejects
+      // it) and the cwd sits outside this package, where a bare
+      // `--import tsx` cannot resolve — so passing proves the shorthand
+      // embedded an absolute loader URL.
       const cwd = await mkdtemp(path.join(tmpdir(), "mockbin-cwd-"));
       try {
         expect(
@@ -556,10 +555,9 @@ console.log(\`gold=\${value} \${process.argv.slice(2).join(",")}\`);`,
     });
 
     it("resolves tsx from the script's own package", async () => {
-      // The fixture lives inside this package (unlike the temp-dir
-      // scripts above), so the shorthand's first resolution base — the
-      // script's own location — finds tsx here. Its enum needs a real
-      // transform, proving the loader ran.
+      // Unlike the temp-dir scripts above, the fixture lives inside
+      // this package, so the first resolution base (the script's own
+      // location) finds tsx; the enum proves the loader transformed it.
       const cleanup = await mockBin("testbin", {
         file: fileURLToPath(
           new URL("./mock-shorthand-fixture.ts", import.meta.url),
