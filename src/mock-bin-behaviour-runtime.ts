@@ -133,7 +133,16 @@ const spawnChild = (lifetimeMs: number): number | undefined => {
   const child = spawn(
     process.execPath,
     ["-e", `setTimeout(() => {}, ${lifetimeMs})`],
-    { stdio: "ignore", env },
+    {
+      stdio: "ignore",
+      env,
+      // POSIX detaching would start a new session, moving the child out
+      // of the mock's process group and out of a group signal's reach.
+      // Windows is the opposite: a spawned child sits in a job that is
+      // killed when the mock exits, so only there must it detach to
+      // outlive the mock.
+      ...(process.platform === "win32" ? { detached: true } : {}),
+    },
   );
   // The child stays in the mock's process group, so a stop that signals
   // the group reaps it; unref keeps it from holding the mock open, and
