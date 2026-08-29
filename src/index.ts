@@ -12,3 +12,4 @@ export {
   type MockBinRecordOptions,
 } from "./mock-bin-behaviour.js";
 export { MOCKS_VAR, withoutMocks } from "./mock-bin-env.js";
+export { rmScratch } from "./rm-scratch.js";

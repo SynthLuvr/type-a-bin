@@ -1,4 +1,3 @@
-import { rmSync } from "node:fs";
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,6 +5,7 @@ import type { MockBinBehaviour, MockBinHandle } from "./mock-bin-behaviour.js";
 import { prepareBehaviour, withCalls } from "./mock-bin-behaviour.js";
 import { isTypeScriptFile, resolveTsxImportUrl } from "./mock-bin-tsx.js";
 import { mockBinWindows } from "./mock-bin-windows.js";
+import { rmScratch } from "./rm-scratch.js";
 
 type MockBinCleanup = () => void;
 
@@ -343,14 +343,7 @@ fi
     if (originalPath) process.env.PATH = originalPath;
     else delete process.env.PATH;
 
-    try {
-      rmSync(tempDir, { recursive: true });
-    } catch (error) {
-      // Ignore cleanup errors - temp dir will be cleaned up eventually
-      console.warn(
-        `Warning: Failed to remove mock-bin temp directory ${tempDir}: ${String(error)}`,
-      );
-    }
+    rmScratch(tempDir);
   };
 }
 
