@@ -77,6 +77,20 @@ const cliArgs =
     ? []
     : [denormalizeEntry(process.argv[1] ?? ""), ...process.argv.slice(2)];
 
+const EVAL_FLAGS = ["-e", "--eval", "-p", "--print"];
+
+const isEvalFlag = (arg: string): boolean =>
+  EVAL_FLAGS.includes(arg) ||
+  arg.startsWith("--eval=") ||
+  arg.startsWith("--print=");
+
+// Eval/print runs carry their program in execArgv and have no entry to
+// redirect — argv[1] is undefined, exactly the shape runEntryDirectly
+// keys on. Helpers spawned from inside a mock through the shim's
+// execPath must run their snippet untouched, so they are never
+// intercepted.
+const isEvalRun = process.execArgv.some(isEvalFlag);
+
 const writeError = (message: string): void => {
   process.stderr.write(`${message}\n`);
 };
@@ -257,6 +271,7 @@ const runEntryDirectly = async (entry: string): Promise<void> => {
 };
 
 const intercept = async (): Promise<void> => {
+  if (isEvalRun) return;
   if (invokedName === HELPER_NAME) return runOriginalCommand(mocks.runOriginal);
   const target = mocks.targets?.[invokedName];
   if (target === undefined) return;
