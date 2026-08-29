@@ -1,12 +1,12 @@
 import { copyFileSync, linkSync, rmSync } from "node:fs";
 import { mkdtemp, stat, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { MockBinScriptFile } from "./mock-bin.js";
 import type { MocksEnv, MockTarget } from "./mock-bin-preload.js";
+import { resolveTsxImportUrl } from "./mock-bin-tsx.js";
 
 // Windows twin of the POSIX mockBin: PATH interception needs a real
 // executable there (node refuses to spawn .cmd/.bat shims without a
@@ -73,18 +73,16 @@ const isNodeInterpreter = (words: string[]): boolean =>
 const interpreterExecutableName = (word: string | undefined): string =>
   word === undefined ? "bash" : basenameWithoutExecutableExtension(word);
 
-const usesTsx = (words: string[]): boolean =>
-  words.some((word) => word === "tsx" || word.startsWith("tsx/"));
-
-const resolveTsxImportUrl = (): string => {
+// A `--import` word names tsx when it is the bare package ("tsx",
+// "tsx/cjs") or a file URL resolving into it — the script-file
+// shorthand embeds an absolute loader URL.
+const isTsxImport = (word: string): boolean => {
+  if (word === "tsx" || word.startsWith("tsx/")) return true;
+  if (!word.startsWith("file:")) return false;
   try {
-    return pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+    return fileURLToPath(word).split(/[\\/]/).includes("tsx");
   } catch {
-    throw new Error(
-      "mockBin: the interpreter requires the tsx package, but tsx is not " +
-        "installed. Add tsx to your devDependencies to mock through node " +
-        "--import tsx on Windows.",
-    );
+    return false;
   }
 };
 
@@ -179,13 +177,17 @@ const mockBinWindows = async (
     runOriginal: { binName: binBase, originalPath },
   });
 
-  // The preload rides along after the tsx loader when the interpreter
-  // names it, so .ts entries resolve through tsx's ESM hooks in the
-  // same resolve chain that redirects the shim entry.
+  // The tsx loader rides ahead of the preload so .ts entries resolve
+  // through its hooks in the same chain that redirects the shim entry;
+  // without tsx, node's native type stripping applies.
+  const scriptFile =
+    typeof codeOrScript === "object" ? codeOrScript.file : undefined;
+  const tsxImportUrl =
+    isNodeMock && words.some(isTsxImport)
+      ? resolveTsxImportUrl(scriptFile)
+      : null;
   const imports = [
-    ...(isNodeMock && usesTsx(words)
-      ? [`--import ${resolveTsxImportUrl()}`]
-      : []),
+    ...(tsxImportUrl === null ? [] : [`--import ${tsxImportUrl}`]),
     `--import ${pathToFileURL(preloadPath).href}`,
   ];
   process.env.NODE_OPTIONS =
