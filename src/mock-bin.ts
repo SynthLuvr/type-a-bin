@@ -2,6 +2,8 @@ import { rmSync } from "node:fs";
 import { chmod, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { MockBinBehaviour, MockBinHandle } from "./mock-bin-behaviour.js";
+import { prepareBehaviour, withCalls } from "./mock-bin-behaviour.js";
 import { mockBinWindows } from "./mock-bin-windows.js";
 
 type MockBinCleanup = () => void;
@@ -101,7 +103,7 @@ const resolveInlineCode = (
  * original command, enabling conditional mocking where some subcommands
  * are mocked while others pass through to the real binary.
  *
- * There are three calling conventions:
+ * There are four calling conventions:
  *
  * 1. **Output shorthand** — pass the plain text the mock should print.
  *    The interpreter defaults to `bash` and the output is echoed.
@@ -111,6 +113,10 @@ const resolveInlineCode = (
  *    `{ file }` object pointing at a script on disk. The file keeps its
  *    own extension, so extension-aware loaders work (e.g.
  *    `node --import tsx` with a `.ts` file).
+ * 4. **Scripted behaviour** — pass a `MockBinBehaviour` object instead
+ *    of a script. The mock records every invocation on the returned
+ *    handle's `calls`, and the object scripts the output, exit code and
+ *    timing without writing a script at all.
  *
  * @param binNameOrConfig - Binary name or a config object with `binName`
  *   and an optional `pattern`
@@ -137,11 +143,23 @@ const resolveInlineCode = (
  *   file: "./src/tests/hoard-script.ts",
  * })
  * ```
+ *
+ * @example
+ * ```ts
+ * // Scripted behaviour, with the invocations recorded
+ * const mock = await mockBin("gh", { stdout: ["#1", "#2"], exitCode: 1 })
+ * expect(mock.calls[0]?.args).toEqual(["pr", "list"])
+ * mock() // The handle is the cleanup function
+ * ```
  */
 function mockBin(
   binNameOrConfig: string | MockBinConfig,
   output: string,
 ): Promise<MockBinCleanup>;
+function mockBin(
+  binNameOrConfig: string | MockBinConfig,
+  behaviour: MockBinBehaviour,
+): Promise<MockBinHandle>;
 function mockBin(
   binNameOrConfig: string | MockBinConfig,
   shebang: string,
@@ -154,7 +172,7 @@ function mockBin(
 ): Promise<MockBinCleanup>;
 async function mockBin(
   binNameOrConfig: string | MockBinConfig,
-  shebangOrOutput: string,
+  shebangOrOutput: string | MockBinBehaviour,
   codeOrScript?: string | MockBinScriptFile,
 ): Promise<MockBinCleanup> {
   const config =
@@ -162,6 +180,18 @@ async function mockBin(
       ? { binName: binNameOrConfig }
       : binNameOrConfig;
   const { binName, pattern } = config;
+
+  // A scripted behaviour compiles to a node mock that carries its own
+  // pattern check, so it installs through the ordinary inline-code path
+  // on both platforms and only the call recorder is layered on top.
+  if (typeof shebangOrOutput === "object") {
+    const { code, recordDir } = await prepareBehaviour(
+      binName,
+      pattern,
+      shebangOrOutput,
+    );
+    return withCalls(await mockBin(binName, "node", code), recordDir);
+  }
 
   // Windows needs a real .exe on the PATH plus a NODE_OPTIONS preload
   // that redirects the shim's entry to the mock script; everything else

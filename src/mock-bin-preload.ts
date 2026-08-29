@@ -245,7 +245,15 @@ const runEntryDirectly = async (entry: string): Promise<void> => {
   process.argv.length = 1;
   process.argv.push(entry, ...cliArgs);
   await import(pathToFileURL(entry).href);
-  process.exit(process.exitCode);
+  // An import settles when the entry's top level finishes — before the
+  // output of a mock that defers work (timers, stdin). Node would start
+  // the REPL the moment this preload settles, so hold until the event
+  // loop drains, then exit with whatever the mock set. A mock holding
+  // the loop open on purpose (trapped signals) never drains, and so
+  // lives until it is killed.
+  await new Promise<void>(() =>
+    process.once("beforeExit", () => process.exit(process.exitCode)),
+  );
 };
 
 const intercept = async (): Promise<void> => {

@@ -4,3 +4,10 @@ export {
   type MockBinScriptFile,
   mockBin,
 } from "./mock-bin.js";
+export {
+  type MockBinBehaviour,
+  type MockBinCall,
+  type MockBinHandle,
+  type MockBinLifetimeOptions,
+  type MockBinRecordOptions,
+} from "./mock-bin-behaviour.js";
