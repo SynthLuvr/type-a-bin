@@ -1,9 +1,5 @@
 import { type RmOptions, rmSync } from "node:fs";
 
-// Windows can transiently deny deleting files a just-killed process still
-// holds (SQLite WALs, shim exes) — rmSync's retry options cover that.
-// Antivirus or indexing can hold temp files open indefinitely, so a
-// still-failing cleanup warns instead of failing a suite that passed.
 const RM_OPTIONS: RmOptions = {
   recursive: true,
   force: true,
@@ -12,12 +8,13 @@ const RM_OPTIONS: RmOptions = {
 };
 
 /**
- * Removes a scratch directory tree without ever failing a test:
- * missing paths are fine (`force`), transient locks are retried, and a
- * removal that still fails warns instead of throwing.
+ * Removes a scratch directory tree without ever throwing. Deletion is
+ * retried because Windows — and busy filesystems generally — can
+ * transiently deny removing files a just-exited process still holds;
+ * a removal that still fails warns, since an unclean temp directory
+ * beats failing a suite that passed.
  *
- * @param dir - Directory to remove; it must be disposable, the removal
- *   is forced
+ * @param dir - Directory to remove; missing paths are fine (`force`)
  */
 const rmScratch = (dir: string): void => {
   try {

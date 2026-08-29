@@ -2,7 +2,7 @@ import { accessSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { rmScratch } from "../rm-scratch.js";
 
 const exists = (target: string): boolean => {
@@ -28,7 +28,8 @@ describe("rmScratch", () => {
   it("tolerates a path that does not exist", () => {
     const missing = path.join(tmpdir(), "rmscratch-definitely-missing");
 
-    expect(() => rmScratch(missing)).not.toThrow();
+    rmScratch(missing);
+
     expect(exists(missing)).toBe(false);
   });
 
@@ -39,16 +40,18 @@ describe("rmScratch", () => {
       const guarded = path.join(parent, "guarded");
       await mkdir(guarded);
       await writeFile(path.join(guarded, "payload.txt"), "x");
-      // Deletions guarded itself (the tree root) now fail with EACCES.
+      // A read-only parent makes removing the tree root fail with
+      // EACCES, which rmSync does not retry, so the failure is fast.
       await chmod(parent, 0o500);
+      const warn = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => undefined);
 
       try {
-        // EACCES is not among the retried error codes, so this fails
-        // fast; the helper must swallow it — an unclean scratch dir
-        // must never fail a suite that passed. The directory
-        // surviving proves rmSync really failed.
-        expect(() => rmScratch(guarded)).not.toThrow();
+        rmScratch(guarded);
+        // The directory surviving proves the removal really failed.
         expect(exists(guarded)).toBe(true);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(guarded));
       } finally {
         await chmod(parent, 0o700);
         await rm(parent, { recursive: true, force: true });
