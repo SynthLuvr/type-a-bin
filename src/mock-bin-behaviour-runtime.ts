@@ -118,10 +118,13 @@ const readStdin = async (): Promise<string> => {
  * prove a stop reaps the process tree rather than the mock alone.
  */
 const spawnChild = (lifetimeMs: number): number | undefined => {
-  // A Windows mock binary is a hard link of node.exe, so the preload
-  // registered through NODE_OPTIONS would redirect this child back into
-  // the mock script — a fork chain of phantom mocks. Dropping the
-  // registry from its env makes the preload inert there.
+  // A Windows mock binary runs behind the type-a-bin trampoline
+  // launcher, which starts it inside a Job Object killed when the
+  // launcher dies — so a descendant detached from its console stays in
+  // the job: a killed mock takes it down with the tree, while a
+  // normally completed mock has the launcher clear the kill-on-close
+  // flag and lets it outlive the invocation. Dropping the mock registry
+  // from its env keeps any legacy NODE_OPTIONS preload inert there.
   const env = { ...process.env };
   delete env[MOCKS_VAR];
   const child = spawn(

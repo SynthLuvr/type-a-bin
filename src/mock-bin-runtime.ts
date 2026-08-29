@@ -1,0 +1,398 @@
+import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
+import Module, { createRequire, registerHooks } from "node:module";
+import { basename, delimiter, extname, join, relative } from "node:path";
+import process from "node:process";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+// Shared Windows dispatch behind both entry points of a mock:
+//
+// - the trampoline launcher (native/trampoline.c) starts Node with a
+//   generated bootstrap that calls runTrampoline(), and
+// - the NODE_OPTIONS preload (mock-bin-preload) calls interceptShim()
+//   for the legacy node.exe-hardlink shims.
+//
+// This module runs inside spawned child processes — as the compiled
+// .js from the published package or as the .ts source under node's
+// native type stripping — so it must stay free of imports beyond
+// node's own modules. The registry env var name is duplicated from
+// mock-bin-env for the same reason; the two must stay in sync.
+const MOCKS_VAR = "TYPE_A_BIN_MOCKS";
+const HELPER_NAME = "mock-a-bin-run-original";
+const PATH_EXTENSIONS = ["", ".exe", ".cmd", ".bat", ".com"];
+const TS_EXTENSIONS = [".cts", ".mts", ".ts", ".tsx"];
+const BASH_LIKE_INTERPRETERS = ["bash", "dash", "ksh", "sh", "zsh"];
+
+interface MockTarget {
+  /** "node" redirects the main entry in-process; "spawn" runs a script. */
+  kind: "node" | "spawn";
+  /** Absolute path of the mock script to run. */
+  entry: string;
+  /** Interpreter name for "spawn" targets (e.g. "bash", "python"). */
+  interpreter?: string;
+  /** Regex source; only matching commands run the mock. */
+  pattern?: string;
+  /** PATH snapshot from before this mock was installed. */
+  originalPath?: string;
+  /**
+   * Absolute file URL of the tsx loader for TypeScript entries. The
+   * trampoline bootstrap imports it before the entry so `.ts` mocks
+   * load through tsx without a NODE_OPTIONS preload.
+   */
+  tsxImportUrl?: string;
+}
+
+interface RunOriginalTarget {
+  binName: string;
+  originalPath: string;
+}
+
+interface MocksEnv {
+  targets?: Record<string, MockTarget>;
+  runOriginal?: RunOriginalTarget;
+}
+
+interface LoadableModule {
+  /** Internal CommonJS entry point, patched to redirect the main module. */
+  _load: (request: string, parent: unknown, isMain: boolean) => unknown;
+}
+
+const readMocks = (): MocksEnv => {
+  try {
+    return JSON.parse(process.env[MOCKS_VAR] ?? "{}") as MocksEnv;
+  } catch {
+    return {};
+  }
+};
+
+const writeError = (message: string): void => {
+  process.stderr.write(`${message}\n`);
+};
+
+// Lookup failures exit 127, matching the POSIX mock scripts.
+const fail = (message: string): never => {
+  writeError(message);
+  process.exit(127);
+};
+
+const isFile = (candidate: string): boolean => {
+  try {
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const searchPathDirs = (originalPath: string | undefined): string[] =>
+  (originalPath ?? process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((dir) => dir !== "" && !dir.includes("mock-bin-"));
+
+const pathCandidates = (name: string, dirs: string[]): string[] => {
+  const candidates: string[] = [];
+  for (const dir of dirs)
+    for (const extension of PATH_EXTENSIONS) {
+      const candidate = join(dir, `${name}${extension}`);
+      if (isFile(candidate)) candidates.push(candidate);
+    }
+  return candidates;
+};
+
+const findExecutable = (name: string, dirs: string[]): string | null =>
+  pathCandidates(name, dirs)[0] ?? null;
+
+const spawnRealAndExit = (command: string, args: string[]): never => {
+  // The real binary must not be re-intercepted by a shim preload.
+  delete process.env[MOCKS_VAR];
+  const result = spawnSync(command, args, { stdio: "inherit" });
+  if (result.error !== undefined)
+    writeError(`Error: '${command}' failed to start: ${String(result.error)}`);
+  process.exit(result.status ?? 127);
+};
+
+const runOriginalCommand = (
+  spec: RunOriginalTarget | undefined,
+  cliArgs: string[],
+): never => {
+  if (spec === undefined)
+    return fail(`Error: ${HELPER_NAME} used outside a mockBin context`);
+  const real = findExecutable(spec.binName, searchPathDirs(spec.originalPath));
+  if (real === null)
+    return fail(`Error: Original '${spec.binName}' command not found in PATH`);
+  return spawnRealAndExit(real, cliArgs);
+};
+
+const runRealBinary = (
+  invokedName: string,
+  cliArgs: string[],
+  originalPath: string | undefined,
+): never => {
+  const real = findExecutable(invokedName, searchPathDirs(originalPath));
+  if (real === null)
+    return fail(`Error: Real binary '${invokedName}' not found in PATH`);
+  return spawnRealAndExit(real, cliArgs);
+};
+
+// WSL's bash launcher lives in the Windows system directories; it cannot
+// run Windows-path scripts, so bash-like interpreters prefer a native
+// shell (e.g. Git for Windows) and fall back to well-known Git installs.
+const isWslLauncher = (candidate: string): boolean => {
+  const lower = candidate.toLowerCase();
+  return (
+    lower.includes("\\windows\\system32\\") || lower.includes("\\windowsapps\\")
+  );
+};
+
+const gitBashCandidates = (): string[] => {
+  const roots = [
+    process.env.ProgramFiles ?? "",
+    process.env["ProgramFiles(x86)"] ?? "",
+    join(process.env.LOCALAPPDATA ?? "", "Programs"),
+  ];
+  const locations: string[] = [];
+  for (const root of roots)
+    if (root !== "") {
+      locations.push(join(root, "Git", "bin", "bash.exe"));
+      locations.push(join(root, "Git", "usr", "bin", "bash.exe"));
+    }
+  return locations;
+};
+
+const resolveInterpreter = (interpreter: string): string | null => {
+  const dirs = (process.env.PATH ?? "")
+    .split(delimiter)
+    .filter((dir) => dir !== "");
+  const candidates = pathCandidates(interpreter, dirs);
+  if (BASH_LIKE_INTERPRETERS.includes(interpreter)) {
+    const native = candidates.find((candidate) => !isWslLauncher(candidate));
+    if (native !== undefined) return native;
+    for (const location of gitBashCandidates())
+      if (isFile(location)) return location;
+  }
+  return candidates[0] ?? null;
+};
+
+const runInterpreterAndExit = (
+  interpreter: string,
+  entry: string,
+  cliArgs: string[],
+): never => {
+  const interpreterPath = resolveInterpreter(interpreter);
+  if (interpreterPath === null)
+    return fail(`Error: Interpreter '${interpreter}' not found in PATH`);
+  const result = spawnSync(interpreterPath, [entry, ...cliArgs], {
+    stdio: "inherit",
+  });
+  if (result.error !== undefined)
+    writeError(
+      `Error: Interpreter '${interpreter}' failed: ${String(result.error)}`,
+    );
+  process.exit(result.status ?? 127);
+};
+
+// tsx registers its CommonJS hooks from a separate entry point; load it
+// lazily so non-TypeScript mocks never require the tsx package.
+const loadTsxCommonJs = (entry: string): void => {
+  if (!TS_EXTENSIONS.includes(extname(entry).toLowerCase())) return;
+  try {
+    createRequire(import.meta.url)("tsx/cjs");
+  } catch {
+    // tsx is not installed: node's native type stripping applies instead.
+  }
+};
+
+// Node rewrites the CLI entry in argv[1] to an absolute path before
+// preloads run, losing the argument as the caller typed it. Recover it
+// relative to the working directory when possible, so mocks, patterns,
+// and spawned interpreters see "pr" instead of "C:\repo\pr".
+const denormalizeEntry = (entry: string): string => {
+  const relativePath = relative(process.cwd(), entry);
+  if (relativePath === "" || relativePath.startsWith("..")) return entry;
+  return relativePath;
+};
+
+// Eval/print runs carry their program in execArgv, so argv[1] is
+// undefined — the shape runEntryDirectly would otherwise hijack — and a
+// helper spawned from inside a mock through the shim must run its
+// snippet untouched.
+const EVAL_FLAG = /^(?:-e|-p|--eval|--print)(?:=|$)/;
+const isEvalRun = (execArgv: string[]): boolean =>
+  execArgv.some((arg) => EVAL_FLAG.test(arg));
+
+const asPath = (specifier: string): string =>
+  specifier.startsWith("file:") ? fileURLToPath(specifier) : specifier;
+
+const redirectNodeEntry = (entry: string, cliArgs: string[]): void => {
+  // Node normalizes the CLI entry to an absolute path in argv[1] before
+  // preloads run. Capture it, then reposition argv so the mock sees the
+  // CLI arguments at process.argv.slice(2) like a real Node CLI script.
+  const originalEntry = process.argv[1] ?? "";
+  process.argv.length = 1;
+  process.argv.push(entry, ...cliArgs);
+
+  // ESM main entry: resolve hooks see the main module with no parent URL,
+  // so redirect that one resolution to the mock script. The tsx loader
+  // (registered before this preload in NODE_OPTIONS) transforms .ts
+  // entries as part of the same resolve chain.
+  registerHooks({
+    resolve: (specifier, context, nextResolve) => {
+      if (context.parentURL == null && asPath(specifier) === originalEntry)
+        return nextResolve(pathToFileURL(entry).href, context);
+      return nextResolve(specifier, context);
+    },
+  });
+
+  // CommonJS main entry: Module._load receives the CLI entry with isMain
+  // set — load the mock through the CommonJS loader instead.
+  const moduleApi = Module as unknown as LoadableModule;
+  const originalLoad = moduleApi._load;
+  moduleApi._load = (request, parent, isMain) => {
+    if (isMain && request === originalEntry) {
+      moduleApi._load = originalLoad;
+      loadTsxCommonJs(entry);
+      return originalLoad(entry, null, true);
+    }
+    return originalLoad(request, parent, isMain);
+  };
+};
+
+// A shim spawn with no CLI arguments leaves node without an entry (the
+// REPL would start), so the mock module is imported directly instead.
+const runEntryDirectly = async (
+  entry: string,
+  cliArgs: string[],
+): Promise<void> => {
+  process.argv.length = 1;
+  process.argv.push(entry, ...cliArgs);
+  await import(pathToFileURL(entry).href);
+  // An import settles when the entry's top level finishes — before the
+  // output of a mock that defers work (timers, stdin). Node would start
+  // the REPL the moment this preload settles, so hold until the event
+  // loop drains, then exit with whatever the mock set. A mock holding
+  // the loop open on purpose (trapped signals) never drains, and so
+  // lives until it is killed.
+  await new Promise<void>(() =>
+    process.once("beforeExit", () => process.exit(process.exitCode)),
+  );
+};
+
+/**
+ * Runs a node-kind mock entry as the process's main module from the
+ * trampoline bootstrap. Unlike a shim, the process already has a real
+ * main module (the bootstrap itself), so there is no REPL to avoid and
+ * no entry redirection needed: argv is rewritten to
+ * `[node, entry, ...args]` and the entry is loaded directly.
+ * CommonJS entries load through `Module._load` with `isMain` set, so
+ * `require.main` matches a script started as `node entry.cjs`; other
+ * entries load as ESM, with tsx registered first when the target
+ * carries a loader URL.
+ */
+const runNodeEntryAsMain = async (
+  entry: string,
+  cliArgs: string[],
+  tsxImportUrl: string | undefined,
+): Promise<void> => {
+  process.argv.length = 1;
+  process.argv.push(entry, ...cliArgs);
+
+  if (extname(entry).toLowerCase() === ".cjs") {
+    const moduleApi = Module as unknown as LoadableModule;
+    moduleApi._load(entry, null, true);
+    return;
+  }
+
+  if (tsxImportUrl !== undefined) await import(tsxImportUrl);
+  await import(pathToFileURL(entry).href);
+};
+
+// Basename without the executable extension: mock-a-bin-run-original.exe
+// and claude.exe both register under their extensionless names.
+const toInvokedName = (exePath: string): string =>
+  basename(exePath, extname(exePath));
+
+/**
+ * Trampoline entry point. The native launcher starts Node as
+ * `[node, mock-bin-trampoline.cjs, <mock>.exe, ...originalArgs]`, so the
+ * invoked binary is the path in argv[2] and every argument after it is
+ * the caller's original argv — Node's option parser never sees it.
+ */
+const runTrampoline = async (): Promise<void> => {
+  const invokedExe = process.argv[2];
+  if (invokedExe === undefined)
+    return fail("Error: type-a-bin trampoline invoked without a mock path");
+  const args = process.argv.slice(3);
+  const invokedName = toInvokedName(invokedExe);
+
+  if (invokedName === HELPER_NAME)
+    return runOriginalCommand(readMocks().runOriginal, args);
+
+  const mocks = readMocks();
+  const target = mocks.targets?.[invokedName];
+  // No registry (e.g. a spawn through withoutMocks) must not land in a
+  // REPL or a crash: hand the invocation to the real binary.
+  if (target === undefined) return runRealBinary(invokedName, args, undefined);
+
+  const commandLine = `${invokedName} ${args.join(" ")}`;
+  const mocked =
+    target.pattern === undefined ||
+    new RegExp(target.pattern).test(commandLine);
+  if (!mocked) return runRealBinary(invokedName, args, target.originalPath);
+  if (target.kind !== "node")
+    return runInterpreterAndExit(
+      target.interpreter ?? "bash",
+      target.entry,
+      args,
+    );
+  return runNodeEntryAsMain(target.entry, args, target.tsxImportUrl);
+};
+
+/**
+ * Shim entry point for the NODE_OPTIONS preload: the process itself is
+ * a hard link of node.exe named after the mocked binary, so the main
+ * entry is redirected in-process once the registry recognizes the
+ * invocation. Kept as the fallback behind the trampoline rollout.
+ */
+const interceptShim = async (): Promise<void> => {
+  const invokedName = toInvokedName(process.argv[0] ?? "");
+
+  // The shim's whole command line after the exe are CLI arguments:
+  // unlike a Node script there is no "entry" consuming the first
+  // positional.
+  const cliArgs =
+    process.argv.length === 1
+      ? []
+      : [denormalizeEntry(process.argv[1] ?? ""), ...process.argv.slice(2)];
+
+  if (isEvalRun(process.execArgv)) return;
+  if (invokedName === HELPER_NAME)
+    return runOriginalCommand(readMocks().runOriginal, cliArgs);
+  const target = readMocks().targets?.[invokedName];
+  if (target === undefined) return;
+  // A process whose CLI entry is a real file is not a shim: mock scripts
+  // spawned through process.execPath (tsx's esbuild service, `node -e`
+  // helpers) inherit the shim exe's name, but their entry exists on
+  // disk while a shim's "subcommand" entry never does.
+  if (isFile(process.argv[1] ?? "")) return;
+  const commandLine = `${invokedName} ${cliArgs.join(" ")}`;
+  const mocked =
+    target.pattern === undefined ||
+    new RegExp(target.pattern).test(commandLine);
+  if (!mocked) return runRealBinary(invokedName, cliArgs, target.originalPath);
+  if (target.kind !== "node")
+    return runInterpreterAndExit(
+      target.interpreter ?? "bash",
+      target.entry,
+      cliArgs,
+    );
+  if (process.argv[1] === undefined)
+    return runEntryDirectly(target.entry, cliArgs);
+  return redirectNodeEntry(target.entry, cliArgs);
+};
+
+export {
+  interceptShim,
+  type MocksEnv,
+  type MockTarget,
+  type RunOriginalTarget,
+  runTrampoline,
+};

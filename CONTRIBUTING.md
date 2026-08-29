@@ -21,6 +21,12 @@ pnpm install
   `pnpm exec ts-canon doctor`
 - On Windows: [Git for Windows](https://gitforwindows.org/) provides the
   `bash` used by bash-interpreter tests
+- To rebuild the Windows trampoline launcher after changing
+  `native/trampoline.c`: install
+  [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (CI pins release
+  `20260812`), run `native/build-trampolines.sh <llvm-mingw>/bin`, then
+  refresh `native/checksums.txt` (`sha256sum`) — CI rebuilds from source
+  and verifies the checksums on every pull request
 
 ## Workflow
 

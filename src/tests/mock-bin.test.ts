@@ -164,19 +164,50 @@ describe("mockBin", () => {
   });
 
   it.runIf(process.platform === "win32")(
-    "windows: cleanup restores NODE_OPTIONS and the mock registry",
+    "windows: cleanup restores the mock registry and launcher env",
     async () => {
       const previousNodeOptions = process.env.NODE_OPTIONS;
       const previousMocks = process.env[MOCKS_VAR];
+      const previousNodeExe = process.env.TYPE_A_BIN_NODE_EXE;
       const cleanup = await mockBin("testbin", "bash", 'echo "test"');
 
-      expect(process.env.NODE_OPTIONS).not.toBe(previousNodeOptions);
+      // The trampoline launcher carries its plumbing in dedicated
+      // variables; NODE_OPTIONS stays untouched in the default mode.
       expect(process.env[MOCKS_VAR]).not.toBe(previousMocks);
+      expect(process.env.TYPE_A_BIN_NODE_EXE).not.toBe(previousNodeExe);
+      expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
 
       cleanup();
 
       expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
       expect(process.env[MOCKS_VAR]).toBe(previousMocks);
+      expect(process.env.TYPE_A_BIN_NODE_EXE).toBe(previousNodeExe);
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "windows: the trampoline escape hatch restores NODE_OPTIONS",
+    async () => {
+      const previousNodeOptions = process.env.NODE_OPTIONS;
+      const previousMocks = process.env[MOCKS_VAR];
+      process.env.TYPE_A_BIN_DISABLE_TRAMPOLINE = "1";
+      try {
+        const cleanup = await mockBin("testbin", "bash", 'echo "test"');
+
+        // The legacy hard-link fallback keeps the NODE_OPTIONS preload.
+        expect(process.env.NODE_OPTIONS).not.toBe(previousNodeOptions);
+        expect(process.env[MOCKS_VAR]).not.toBe(previousMocks);
+
+        const result = spawnSync("testbin", ["hi"], { encoding: "utf-8" });
+        expect(result.stdout).toBe("test\n");
+
+        cleanup();
+
+        expect(process.env.NODE_OPTIONS).toBe(previousNodeOptions);
+        expect(process.env[MOCKS_VAR]).toBe(previousMocks);
+      } finally {
+        delete process.env.TYPE_A_BIN_DISABLE_TRAMPOLINE;
+      }
     },
   );
 
