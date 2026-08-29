@@ -57,6 +57,7 @@ fully typed, dependency-free library with richer features.
 - [API reference](#api-reference)
   - [`mockBin(...)`](#mockbin)
   - [`withoutMocks(env)`](#withoutmocksenv)
+  - [`rmScratch(dir)`](#rmscratchdir)
   - [Types](#types)
 - [Packages](#packages)
 - [Prerequisites](#prerequisites)
@@ -642,6 +643,24 @@ const child = spawn(
 
 The registry variable’s name is exported as `MOCKS_VAR`, so callers that
 need to read or strip the registry never hardcode it.
+
+### `rmScratch(dir)`
+
+Removes a scratch directory tree without ever failing a test: the
+deletion is forced and retried (`maxRetries: 40`, `retryDelay: 250`),
+because Windows — and busy filesystems generally — can transiently deny
+deleting files a just-exited process still holds (shim executables,
+SQLite WAL files). A removal that still fails after the retries logs a
+warning instead of throwing: leaving a temp directory behind beats
+failing a suite that passed.
+
+``` ts
+import { rmScratch } from "type-a-bin";
+
+rmScratch(scratchDir); // never throws
+```
+
+`mockBin` cleanup uses this helper internally on every platform.
 
 ### Types
 

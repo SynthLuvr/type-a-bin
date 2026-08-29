@@ -1,4 +1,4 @@
-import { copyFileSync, linkSync, rmSync } from "node:fs";
+import { copyFileSync, linkSync } from "node:fs";
 import { mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ import type { MockBinScriptFile } from "./mock-bin.js";
 import { MOCKS_VAR } from "./mock-bin-env.js";
 import type { MocksEnv, MockTarget } from "./mock-bin-preload.js";
 import { resolveTsxImportUrl } from "./mock-bin-tsx.js";
+import { rmScratch } from "./rm-scratch.js";
 
 // Windows twin of the POSIX mockBin: PATH interception needs a real
 // executable there (node refuses to spawn .cmd/.bat shims without a
@@ -203,21 +204,7 @@ const mockBinWindows = async (
     else process.env.PATH = originalPath;
     restoreEnv("NODE_OPTIONS", previousNodeOptions);
     restoreEnv(MOCKS_VAR, previousMocks);
-    try {
-      // Windows can transiently deny deleting files a just-exited
-      // process still holds (the shim exes), so rmSync's retry options
-      // cover that.
-      rmSync(tempDir, {
-        recursive: true,
-        force: true,
-        maxRetries: 40,
-        retryDelay: 250,
-      });
-    } catch (error) {
-      console.warn(
-        `Warning: Failed to remove mock-bin temp directory ${tempDir}: ${String(error)}`,
-      );
-    }
+    rmScratch(tempDir);
   };
 };
 
