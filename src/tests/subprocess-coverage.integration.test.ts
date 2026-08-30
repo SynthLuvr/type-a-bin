@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -31,9 +32,11 @@ import {
 // process — without propagation it has no coverage at all, and the
 // merge reports zero files.
 
-const srcRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
+// Node's ESM loader reports module URLs by their real path (Windows
+// short-name aliases, macOS /tmp symlinks), so every path the merge
+// filters or looks up must match that form.
+const srcRoot = realpathSync(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
 );
 const runtimePath = path.join(srcRoot, "mock-bin-behaviour-runtime.ts");
 
@@ -108,10 +111,9 @@ describe("subprocess coverage propagation", () => {
       path.join(tmpdir(), "type-a-bin-subcov-src-"),
     );
     try {
-      const script = path.join(scriptDir, "script.ts");
       const answerLine = 5;
       writeFileSync(
-        script,
+        path.join(scriptDir, "script.ts"),
         [
           "// padding so coverage lines are stable",
           "const pick = (): number => {",
@@ -122,6 +124,7 @@ describe("subprocess coverage propagation", () => {
           "",
         ].join("\n"),
       );
+      const script = realpathSync(path.join(scriptDir, "script.ts"));
 
       const cleanup = await mockBin("covtsx", { file: script });
       try {

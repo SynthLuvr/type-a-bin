@@ -15,7 +15,7 @@
 // ERR_INVALID_RETURN_PROPERTY_VALUE. Capture failures are swallowed —
 // a broken observer must never take down a process under test.
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -37,8 +37,20 @@ const seen = new Set();
 // recording anything else is pure noise. The default scopes the
 // observer to the project the runner was started from; dependencies
 // under node_modules are excluded even when they sit inside a root.
-const toPrefix = (root) =>
-  `${pathToFileURL(resolve(root.replace(/[\\/]+$/, ""))).href}/`;
+// Roots go through realpath first: Node's ESM loader reports module
+// URLs by their real path (short-name aliases like Windows
+// RUNNER~1, or /tmp symlinks on macOS, expand), so a literal prefix
+// would miss the modules it names.
+const toPrefix = (root) => {
+  const trimmed = root.replace(/[\\/]+$/, "");
+  let absolute = resolve(trimmed);
+  try {
+    absolute = realpathSync(absolute);
+  } catch {
+    // Root does not exist (yet): scope by the literal path.
+  }
+  return `${pathToFileURL(absolute).href}/`;
+};
 
 const rootsEnv = process.env[ROOTS_ENV];
 const scopePrefixes =
