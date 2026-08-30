@@ -620,10 +620,13 @@ spawn:
     `NODE_OPTIONS` registers first and the observer wraps it.
 2.  TypeScript mocks that run through the tsx loader load the observer
     after the loader explicitly — appended to the POSIX exec line, or
-    through an ordered restart from the Windows trampoline bootstrap —
-    and drop the inherited `NODE_OPTIONS` entry first, because the hook
-    module registers its loader only once and an inherited entry would
-    win that registration.
+    from the Windows trampoline bootstrap, which imports the observer
+    in-process right after tsx when the inherited `NODE_OPTIONS` carries
+    no hook entry — there is no startup registration to re-order, so no
+    second process is needed. Only a hook already present in
+    `NODE_OPTIONS` forces an ordered restart, which drops the inherited
+    entry first, because the hook module registers its loader only once
+    and the inherited entry would win that registration.
 
 A project’s own launcher that puts its loader on the child’s argv (a
 `bin/cli.mjs` that spawns `node --import tsx … src/cli.ts`) must apply

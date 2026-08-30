@@ -1,5 +1,6 @@
 export {
   coverageHookUrl,
+  hookPresentInNodeOptions,
   type MergeableCoverageMap,
   mergeSubprocessCoverage,
   RAW_COVERAGE_ENV,

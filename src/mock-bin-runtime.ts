@@ -33,17 +33,34 @@ const coverageHookUrl = (): string =>
 const coverageOrderingNeeded = (): boolean =>
   (process.env[RAW_COVERAGE_ENV] ?? "") !== "";
 
+const nodeOptionTokens = (nodeOptions: string): string[] =>
+  nodeOptions.split(" ").filter((token) => token !== "");
+
+const isHookImportToken = (
+  hook: string,
+  tokens: string[],
+  index: number,
+): boolean =>
+  tokens[index] === hook ||
+  tokens[index] === `--import=${hook}` ||
+  (tokens[index] === "--import" && tokens[index + 1] === hook);
+
 const stripCoverageHookFromNodeOptions = (nodeOptions: string): string => {
   const hook = coverageHookUrl();
-  const tokens = nodeOptions.split(" ").filter((token) => token !== "");
+  const tokens = nodeOptionTokens(nodeOptions);
   return tokens
-    .filter(
-      (token, index) =>
-        token !== hook &&
-        token !== `--import=${hook}` &&
-        !(token === "--import" && tokens[index + 1] === hook),
-    )
+    .filter((_, index) => !isHookImportToken(hook, tokens, index))
     .join(" ");
+};
+
+// Whether node itself loaded the observer at startup — true only while
+// an `--import` entry for it sits in NODE_OPTIONS. The trampoline
+// launcher never puts it on its own argv, so NODE_OPTIONS is the only
+// startup registration channel this dispatch can see.
+const hookPresentInNodeOptions = (nodeOptions: string): boolean => {
+  const hook = coverageHookUrl();
+  const tokens = nodeOptionTokens(nodeOptions);
+  return tokens.some((_, index) => isHookImportToken(hook, tokens, index));
 };
 
 const HELPER_NAME = "mock-a-bin-run-original";
@@ -371,16 +388,24 @@ const runNodeEntryAsMain = async (
     return;
   }
 
-  // An in-process tsx import would put the startup-registered observer
-  // below it in the LIFO hook chain, so under subprocess coverage the
-  // process restarts with loader-then-observer on the argv instead
-  // (argv --import runs after NODE_OPTIONS); the inherited entry is
-  // dropped in the restart so the earlier registration cannot win the
-  // hook module's one-shot load.
-  if (tsxImportUrl !== undefined && coverageOrderingNeeded())
+  // Under subprocess coverage the observer must sit above the tsx
+  // loader in the LIFO hook chain. A hook registered at startup from
+  // an inherited NODE_OPTIONS entry cannot be re-ordered in-process
+  // (the hook module loads its loader only once), so the process
+  // restarts with loader-then-observer on argv, dropping the inherited
+  // entry so the earlier registration cannot win. Without a hook in
+  // NODE_OPTIONS there is no startup registration: importing the
+  // observer right here, after tsx, gives the same ordering without a
+  // second node startup.
+  const needsRestart =
+    tsxImportUrl !== undefined &&
+    coverageOrderingNeeded() &&
+    hookPresentInNodeOptions(process.env.NODE_OPTIONS ?? "");
+  if (needsRestart)
     return restartWithOrderedObserver(entry, cliArgs, tsxImportUrl);
 
   if (tsxImportUrl !== undefined) await import(tsxImportUrl);
+  if (coverageOrderingNeeded()) await import(coverageHookUrl());
   await import(pathToFileURL(entry).href);
 };
 

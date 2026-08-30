@@ -19,6 +19,7 @@ import { MOCKS_VAR } from "../mock-bin-env.js";
 import { resolveTsxImportUrl } from "../mock-bin-tsx.js";
 import {
   coverageHookUrl,
+  hookPresentInNodeOptions,
   mergeSubprocessCoverage,
   RAW_COVERAGE_ENV,
   ROOTS_ENV,
@@ -66,10 +67,13 @@ const propagationEnv = (rawDir: string, roots: string) => {
 /** One transform record as the observer hook wrote it. */
 type RecordedTransform = { code: string; map?: { mappings: string } };
 
+/** The transform-record files the children wrote into `rawDir`. */
+const transformRecordFiles = (rawDir: string): string[] =>
+  readdirSync(rawDir).filter((name) => /^transforms-.*\.jsonl$/.test(name));
+
 /** Every transform record the children wrote into `rawDir`, parsed. */
 const recordedTransforms = (rawDir: string): RecordedTransform[] =>
-  readdirSync(rawDir)
-    .filter((name) => /^transforms-.*\.jsonl$/.test(name))
+  transformRecordFiles(rawDir)
     .flatMap((name) => readFileSync(join(rawDir, name), "utf8").split("\n"))
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as RecordedTransform);
@@ -109,6 +113,55 @@ const runMockedBin = (
   } finally {
     cleanup();
   }
+};
+
+// Reproduces the native trampoline launcher's invocation shape: a
+// CommonJS bootstrap calls runTrampoline, argv[2] names the invoked
+// mock, the registry travels in MOCKS_VAR, and the child starts with
+// the caller's NODE_OPTIONS.
+const runTrampolineDispatch = (
+  scriptDir: string,
+  rawDir: string,
+  entryLines: string[],
+  nodeOptions: string,
+) => {
+  writeFileSync(path.join(scriptDir, "entry.ts"), entryLines.join("\n"));
+  const entry = realpathSync(path.join(scriptDir, "entry.ts"));
+  const tsxImportUrl = resolveTsxImportUrl(entry);
+  expect(tsxImportUrl).not.toBeNull();
+
+  const bootPath = path.join(scriptDir, "trampoline-boot.cjs");
+  writeFileSync(
+    bootPath,
+    `require(${JSON.stringify(
+      path.join(srcRoot, "mock-bin-runtime.ts"),
+    )}).runTrampoline();\n`,
+  );
+  const registry = {
+    targets: {
+      covtrampoline: {
+        kind: "node",
+        entry,
+        tsxImportUrl: tsxImportUrl ?? undefined,
+        originalPath: "",
+      },
+    },
+  };
+  return spawnSync(
+    process.execPath,
+    [bootPath, path.join(scriptDir, "covtrampoline.exe")],
+    {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        NODE_V8_COVERAGE: rawDir,
+        [RAW_COVERAGE_ENV]: rawDir,
+        [ROOTS_ENV]: scriptDir,
+        [MOCKS_VAR]: JSON.stringify(registry),
+        NODE_OPTIONS: nodeOptions,
+      },
+    },
+  );
 };
 
 describe("subprocess coverage propagation", () => {
@@ -209,59 +262,18 @@ describe("subprocess coverage propagation", () => {
     }
   });
 
-  it("orders the observer for trampoline-dispatched TypeScript targets", async () => {
+  it("orders the observer for trampoline-dispatched TypeScript targets", () => {
     const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-tr-"));
     // Project-tree path (see the tsx test above) so realpaths pair.
     const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-tr-"));
     try {
-      writeFileSync(
-        path.join(scriptDir, "entry.ts"),
-        [
-          'const note = (): string => "reexec";',
-          "console.log(note());",
-          "",
-        ].join("\n"),
-      );
-      const entry = realpathSync(path.join(scriptDir, "entry.ts"));
-      const tsxImportUrl = resolveTsxImportUrl(entry);
-      expect(tsxImportUrl).not.toBeNull();
-
-      // The trampoline bootstrap's invocation shape: a CommonJS
-      // bootstrap calls runTrampoline, argv[2] names the invoked mock,
-      // the registry travels in MOCKS_VAR, and the runner's
-      // NODE_OPTIONS already loads the observer — exactly the
-      // inheritance that would otherwise register it before tsx.
-      const bootPath = path.join(scriptDir, "trampoline-boot.cjs");
-      writeFileSync(
-        bootPath,
-        `require(${JSON.stringify(
-          path.join(srcRoot, "mock-bin-runtime.ts"),
-        )}).runTrampoline();\n`,
-      );
-      const registry = {
-        targets: {
-          covtrampoline: {
-            kind: "node",
-            entry,
-            tsxImportUrl: tsxImportUrl ?? undefined,
-            originalPath: "",
-          },
-        },
-      };
-      const result = spawnSync(
-        process.execPath,
-        [bootPath, path.join(scriptDir, "covtrampoline.exe")],
-        {
-          encoding: "utf-8",
-          env: {
-            ...process.env,
-            NODE_V8_COVERAGE: rawDir,
-            [RAW_COVERAGE_ENV]: rawDir,
-            [ROOTS_ENV]: scriptDir,
-            [MOCKS_VAR]: JSON.stringify(registry),
-            NODE_OPTIONS: `--import ${coverageHookUrl()}`,
-          },
-        },
+      // The runner's NODE_OPTIONS already loads the observer — exactly
+      // the inheritance that would otherwise register it before tsx.
+      const result = runTrampolineDispatch(
+        scriptDir,
+        rawDir,
+        ['const note = (): string => "reexec";', "console.log(note());", ""],
+        `--import ${coverageHookUrl()}`,
       );
       expect(result.stderr).toBe("");
       expect(result.stdout).toBe("reexec\n");
@@ -281,6 +293,47 @@ describe("subprocess coverage propagation", () => {
     }
   });
 
+  it("registers the observer in-process when NODE_OPTIONS has no hook", () => {
+    const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-ip-"));
+    // Project-tree path (see the tsx test above) so realpaths pair.
+    const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-ip-"));
+    try {
+      // The entry reports which path took it: a restart carries the
+      // ordered --import pair in execArgv, the in-process path none.
+      // A launcher that owns the observer's ordering itself strips the
+      // hook from the inherited NODE_OPTIONS; other options stay.
+      const result = runTrampolineDispatch(
+        scriptDir,
+        rawDir,
+        [
+          "const note = (): string =>",
+          '  process.execArgv.length === 0 ? "inproc" : "restart";',
+          "console.log(note());",
+          "",
+        ],
+        stripCoverageHookFromNodeOptions(process.env.NODE_OPTIONS ?? ""),
+      );
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe("inproc\n");
+      expect(result.status).toBe(0);
+
+      // Same ordering guarantee as the restart: the recorded entry is
+      // tsx's transpiled output with its inline source map.
+      expectTranspiledRecord(
+        recordedTransforms(rawDir),
+        "const note",
+        ": string",
+      );
+
+      // Exactly one observer wrote transform records — no restarted
+      // second process existed to write a second file.
+      expect(transformRecordFiles(rawDir)).toHaveLength(1);
+    } finally {
+      rmSync(rawDir, { recursive: true, force: true });
+      rmSync(scriptDir, { recursive: true, force: true });
+    }
+  });
+
   it("survives torn transform lines and unparseable profiles", async () => {
     const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-noise-"));
     try {
@@ -293,9 +346,7 @@ describe("subprocess coverage propagation", () => {
       // A crash mid-append leaves a torn trailing line behind; a
       // killed child can leave a truncated profile. Neither may sink
       // the merge for the artifacts that are intact.
-      const transformFiles = readdirSync(rawDir).filter((name) =>
-        /^transforms-.*\.jsonl$/.test(name),
-      );
+      const transformFiles = transformRecordFiles(rawDir);
       expect(transformFiles.length).toBeGreaterThan(0);
       for (const name of transformFiles)
         appendFileSync(join(rawDir, name), '{"url": "tor');
@@ -355,5 +406,17 @@ describe("subprocess coverage propagation", () => {
       ),
     ).toBe(loader);
     expect(stripCoverageHookFromNodeOptions("")).toBe("");
+  });
+
+  it("detects a startup-registered observer in every --import spelling", () => {
+    const hook = coverageHookUrl();
+    expect(hookPresentInNodeOptions(`--import ${hook}`)).toBe(true);
+    expect(hookPresentInNodeOptions(`--import=${hook}`)).toBe(true);
+    // A launcher's own loader and unrelated options do not count.
+    expect(hookPresentInNodeOptions("--import /tmp/project-loader.mjs")).toBe(
+      false,
+    );
+    expect(hookPresentInNodeOptions("--max-old-space-size=4096")).toBe(false);
+    expect(hookPresentInNodeOptions("")).toBe(false);
   });
 });
