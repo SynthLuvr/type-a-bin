@@ -37,19 +37,20 @@ const seen = new Set();
 // recording anything else is pure noise. The default scopes the
 // observer to the project the runner was started from; dependencies
 // under node_modules are excluded even when they sit inside a root.
-// Roots go through realpath first: Node's ESM loader reports module
-// URLs by their real path (short-name aliases like Windows
-// RUNNER~1, or /tmp symlinks on macOS, expand), so a literal prefix
-// would miss the modules it names.
-const toPrefix = (root) => {
-  const trimmed = root.replace(/[\\/]+$/, "");
-  let absolute = resolve(trimmed);
+// Each root scopes by both its realpath and its literal form: Node's
+// ESM loader may report module URLs through either (Windows
+// short-name aliases like RUNNER~1, macOS /tmp symlinks), so a single
+// form would miss the modules the root names.
+const toPrefixes = (root) => {
+  const absolute = resolve(root.replace(/[\\/]+$/, ""));
+  const literal = `${pathToFileURL(absolute).href}/`;
   try {
-    absolute = realpathSync(absolute);
+    const real = `${pathToFileURL(realpathSync(absolute)).href}/`;
+    return real === literal ? [literal] : [literal, real];
   } catch {
     // Root does not exist (yet): scope by the literal path.
+    return [literal];
   }
-  return `${pathToFileURL(absolute).href}/`;
 };
 
 const rootsEnv = process.env[ROOTS_ENV];
@@ -59,7 +60,7 @@ const scopePrefixes =
     : (rootsEnv === undefined || rootsEnv === "" ? process.cwd() : rootsEnv)
         .split(delimiter)
         .filter((root) => root !== "")
-        .map(toPrefix);
+        .flatMap(toPrefixes);
 
 const inScope = (url) =>
   typeof url === "string" &&

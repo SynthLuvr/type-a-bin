@@ -107,9 +107,11 @@ describe("subprocess coverage propagation", () => {
 
   it("remaps a tsx-loaded script through its inline source map", async () => {
     const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-tsx-"));
-    const scriptDir = mkdtempSync(
-      path.join(tmpdir(), "type-a-bin-subcov-src-"),
-    );
+    // The script lives under a real project-style path, not the OS
+    // temp directory: runner temp directories can carry short-name
+    // path aliases the merge's exact-URL bookkeeping cannot pair, and
+    // a project tree is where transpiled sources actually live.
+    const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-src-"));
     try {
       const answerLine = 5;
       writeFileSync(
