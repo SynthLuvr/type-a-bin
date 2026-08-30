@@ -56,6 +56,7 @@ fully typed, dependency-free library with richer features.
     once](#mocking-multiple-commands-at-once)
   - [Mocking with any interpreter](#mocking-with-any-interpreter)
 - [Using with a test runner](#using-with-a-test-runner)
+- [Subprocess coverage](#subprocess-coverage)
 - [API reference](#api-reference)
   - [`mockBin(...)`](#mockbin)
   - [`withoutMocks(env)`](#withoutmocksenv)
@@ -534,6 +535,107 @@ or any other framework. The key is to always call the cleanup function
 to restore the original `PATH` — otherwise mocks leak into subsequent
 tests.
 
+## Subprocess coverage
+
+Type-A-Bin’s whole domain is tests that spawn subprocesses — the mocked
+binaries themselves, and the real CLIs they shadow. A test runner’s
+coverage collects inside its own process, so any code that runs
+exclusively in those children reports as 0% no matter how thoroughly the
+suite exercises it. This repository hit that exact wall:
+`mock-bin-runtime.ts`, `mock-bin-preload.ts`, and
+`mock-bin-behaviour-runtime.ts` all execute inside spawned children
+(behind the Windows trampoline, the shim preload, or the mocked binary
+itself), so its own quality gate had to exclude them.
+
+The optional `type-a-bin/subprocess-coverage` companion closes that gap.
+It is off unless the environment opts in, adds no runtime dependency to
+the core package (see [Packages](#packages)), and works for any Node
+child that inherits the test runner’s environment.
+
+### How it works
+
+1.  When `TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR` names a directory, a
+    custom vitest provider points the runner’s `NODE_V8_COVERAGE` at it
+    and loads a tiny observer hook through `NODE_OPTIONS`. Children
+    inherit both: Node’s built-in profiler then writes one raw profile
+    per child on exit, while the observer records the code each child
+    actually executed — for `.ts` modules loaded through tsx that is the
+    transpiled output plus its inline source map, and under Node’s own
+    type stripping it is the source itself, whose transform erases
+    syntax in place and preserves offsets.
+2.  At the end of the run the provider pairs each raw profile with the
+    matching recorded transform, remaps the offsets onto the original
+    sources, and merges the result into the run’s coverage map —
+    respecting `coverage.include`/`exclude` exactly like in-process
+    collection, so child-only files appear in the same report and the
+    same thresholds.
+3.  Raw profiles are removed after a green run
+    (`TYPE_A_BIN_KEEP_RAW_COVERAGE=1` keeps them for debugging); a
+    failing run keeps them automatically.
+
+### Enabling it in a project
+
+Point `coverage.customProviderModule` at the provider and opt in through
+the environment (here from the command line; a wrapper script like this
+repository’s `scripts/vitest-coverage.mts` works the same):
+
+``` bash
+TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR=coverage/.v8-raw \
+  pnpm vitest run --coverage
+```
+
+``` ts
+// vitest.config.ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    coverage: {
+      provider: "custom",
+      customProviderModule: "type-a-bin/subprocess-coverage/provider",
+      include: ["src/**/*.ts"],
+      thresholds: { lines: 80, functions: 80, statements: 80, branches: 80 },
+    },
+  },
+});
+```
+
+Children spawned with an explicit `env` (rather than inheriting the
+runner’s) need the same two variables; `subprocessCoverageEnv()` builds
+them idempotently:
+
+``` ts
+import { subprocessCoverageEnv } from "type-a-bin/subprocess-coverage";
+
+const result = execFileSync("my-cli", ["build"], {
+  encoding: "utf-8",
+  env: { ...process.env, ...subprocessCoverageEnv() },
+});
+```
+
+### Environment variables
+
+| Variable | Meaning |
+|----|----|
+| `TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR` | Directory for raw profiles; unset disables propagation entirely |
+| `TYPE_A_BIN_SUBPROCESS_COVERAGE_ROOTS` | Path-delimited directories whose modules are recorded (default: the working directory; `node_modules` is always skipped) |
+| `TYPE_A_BIN_KEEP_RAW_COVERAGE` | Set to `1` to keep raw profiles after a green run |
+
+### Caveats
+
+- Only children that exit normally flush a profile: one killed with
+  SIGKILL contributes nothing, and on Windows `kill()` is an
+  unconditional `TerminateProcess`, so a stopped long-lived child never
+  flushes there either.
+- Raw profiles are best-effort — a function a child never calls may
+  never be compiled, and so cannot be credited. Statement and line
+  coverage stay accurate; function and branch percentages read lower
+  than an in-process run would show.
+- The observer must register before a module loads to record it, so a
+  `--import` that runs ahead of it in `NODE_OPTIONS` escapes
+  observation. The composed environment loads the observer first for
+  exactly that reason.
+
 ## API reference
 
 ### `mockBin`
@@ -793,6 +895,7 @@ Run from the repository root:
 |----|----|
 | `pnpm build` | Build the library (and workspace packages) to `dist/` |
 | `pnpm test` | Build, run unit tests, then run workspace tests |
+| `pnpm test:lib` | Run the library suite with subprocess coverage propagation enabled |
 | `pnpm lint` | Run all linters via ts-canon (Biome, oxlint, ast-grep, pandoc, peer-deps, audit, jscpd) |
 | `pnpm format` | Run all formatters via ts-canon with auto-fix |
 | `pnpm test:watch` | Run unit tests in watch mode |
