@@ -1,12 +1,11 @@
 #!/usr/bin/env tsx
-// Runs vitest with subprocess coverage propagation enabled
-// (`pnpm test:lib`). The env vars below opt the custom coverage
-// provider configured in vitest.config.ts in: it points the runner's
-// environment at a shared raw-profile directory and loads the observer
-// hook, which every Node child that inherits the environment picks up
-// — and the provider merges the result into the report (see
-// src/subprocess-coverage/merge.ts). A bare `vitest run` without this
-// wrapper behaves exactly as before.
+// Runs vitest with subprocess coverage propagation enabled for
+// `pnpm test:lib`. The env vars opt the custom provider configured in
+// vitest.config.ts in: the runner's environment points at a shared
+// raw-profile directory and loads the observer hook, which every Node
+// child that inherits the environment picks up — the provider merges
+// the result into the report (see src/subprocess-coverage/merge.ts).
+// A bare `vitest run` without this wrapper behaves exactly as before.
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

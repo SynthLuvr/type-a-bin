@@ -45,12 +45,10 @@ beforeAll(async () => {
   };
   const importOption = `--import ${preloadUrl}`;
   const previousNodeOptions = process.env.NODE_OPTIONS;
-  // The propagation observer (src/subprocess-coverage/coverage-hook.mjs)
-  // travels in an inherited NODE_OPTIONS; appending the preload after
-  // it lets the observer register first, so the preload — and the
-  // runtime it loads — are recorded like any other module. Nothing
-  // here depends on import order: every --import runs before the main
-  // module either way.
+  // The propagation observer travels in the inherited NODE_OPTIONS;
+  // appending the preload after it lets the observer register first,
+  // so the preload — and the runtime it loads — are recorded like any
+  // other module.
   shimEnv = {
     ...process.env,
     [MOCKS_VAR]: JSON.stringify(registry),

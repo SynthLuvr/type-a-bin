@@ -14,7 +14,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { createCoverageMap } from "istanbul-lib-coverage";
 import { describe, expect, it } from "vitest";
-import { mockBin } from "../mock-bin.js";
+import { type MockBinCleanup, mockBin } from "../mock-bin.js";
 import {
   coverageHookUrl,
   mergeSubprocessCoverage,
@@ -48,37 +48,54 @@ const lineNumberOf = (file: string, needle: string): number => {
   return at + 1;
 };
 
+// Spawn environment carrying the scratch propagation settings instead
+// of any outer run's. Must be composed after mockBin so it also
+// carries the PATH entry the mock just installed.
+const propagationEnv = (rawDir: string, roots: string) => {
+  const env = {
+    ...process.env,
+    [RAW_COVERAGE_ENV]: rawDir,
+    [ROOTS_ENV]: roots,
+  };
+  return { ...env, ...subprocessCoverageEnv(env) };
+};
+
+// Spawns an installed mock once as a real binary and always
+// uninstalls it again.
+const runMockedBin = (
+  name: string,
+  args: string[],
+  rawDir: string,
+  roots: string,
+  cleanup: MockBinCleanup,
+) => {
+  try {
+    return spawnSync(name, args, {
+      encoding: "utf-8",
+      env: propagationEnv(rawDir, roots),
+    });
+  } finally {
+    cleanup();
+  }
+};
+
 describe("subprocess coverage propagation", () => {
   it("counts the mocked binary's process in a merged report", async () => {
     const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-"));
     try {
-      const cleanup = await mockBin("covbin", {
+      const install = await mockBin("covbin", {
         stdout: ["from the child"],
         exitCode: 3,
       });
-      try {
-        // Composed after mockBin: the spawn environment must carry the
-        // PATH entry the mock just installed, plus the scratch
-        // propagation settings instead of any outer run's.
-        const env = {
-          ...process.env,
-          [RAW_COVERAGE_ENV]: rawDir,
-          [ROOTS_ENV]: srcRoot,
-          ...subprocessCoverageEnv({
-            ...process.env,
-            [RAW_COVERAGE_ENV]: rawDir,
-            [ROOTS_ENV]: srcRoot,
-          }),
-        };
-        const result = spawnSync("covbin", ["pr", "list"], {
-          encoding: "utf-8",
-          env,
-        });
-        expect(result.stdout).toBe("from the child\n");
-        expect(result.status).toBe(3);
-      } finally {
-        cleanup();
-      }
+      const result = runMockedBin(
+        "covbin",
+        ["pr", "list"],
+        rawDir,
+        srcRoot,
+        install,
+      );
+      expect(result.stdout).toBe("from the child\n");
+      expect(result.status).toBe(3);
 
       const coverageMap = createCoverageMap();
       const merged = await mergeSubprocessCoverage(
@@ -88,16 +105,15 @@ describe("subprocess coverage propagation", () => {
       );
       expect(merged).toBeGreaterThan(0);
 
-      const fileCoverage = coverageMap.fileCoverageFor(runtimePath);
-      expect(fileCoverage).toBeDefined();
-
-      // Line coverage keyed by 1-based line number: the stdout write
-      // only executes inside the mocked binary's own process.
+      // Line coverage is keyed by 1-based line number; the stdout
+      // write only executes inside the mocked binary's own process.
       const writeLine = lineNumberOf(
         runtimePath,
         "process.stdout.write(`${line}",
       );
-      const lineCoverage = fileCoverage.getLineCoverage();
+      const lineCoverage = coverageMap
+        .fileCoverageFor(runtimePath)
+        .getLineCoverage();
       expect(lineCoverage[writeLine]).toBeGreaterThan(0);
       expect(Object.values(lineCoverage).some((count) => count > 0)).toBe(true);
     } finally {
@@ -107,10 +123,10 @@ describe("subprocess coverage propagation", () => {
 
   it("remaps a tsx-loaded script through its inline source map", async () => {
     const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-tsx-"));
-    // The script lives under a real project-style path, not the OS
-    // temp directory: runner temp directories can carry short-name
-    // path aliases the merge's exact-URL bookkeeping cannot pair, and
-    // a project tree is where transpiled sources actually live.
+    // The script lives under a project-style path, not the OS temp
+    // directory: temp directories can carry short-name path aliases
+    // the merge's exact-URL bookkeeping cannot pair, and a project
+    // tree is where transpiled sources actually live.
     const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-src-"));
     try {
       const answerLine = 5;
@@ -128,23 +144,9 @@ describe("subprocess coverage propagation", () => {
       );
       const script = realpathSync(path.join(scriptDir, "script.ts"));
 
-      const cleanup = await mockBin("covtsx", { file: script });
-      try {
-        const env = {
-          ...process.env,
-          [RAW_COVERAGE_ENV]: rawDir,
-          [ROOTS_ENV]: scriptDir,
-          ...subprocessCoverageEnv({
-            ...process.env,
-            [RAW_COVERAGE_ENV]: rawDir,
-            [ROOTS_ENV]: scriptDir,
-          }),
-        };
-        const result = spawnSync("covtsx", [], { encoding: "utf-8", env });
-        expect(result.stdout).toBe("42\n");
-      } finally {
-        cleanup();
-      }
+      const install = await mockBin("covtsx", { file: script });
+      const result = runMockedBin("covtsx", [], rawDir, scriptDir, install);
+      expect(result.stdout).toBe("42\n");
 
       // The tsx loader transpiles the script (esbuild output, not the
       // source), so only the recorded inline source map can put the
@@ -171,27 +173,13 @@ describe("subprocess coverage propagation", () => {
     try {
       // A behaviour mock runs as Node and loads the library's runtime
       // module, so the child leaves both artifact kinds behind.
-      const cleanup = await mockBin("covnoise", { stdout: ["one line"] });
-      try {
-        const env = {
-          ...process.env,
-          [RAW_COVERAGE_ENV]: rawDir,
-          [ROOTS_ENV]: srcRoot,
-          ...subprocessCoverageEnv({
-            ...process.env,
-            [RAW_COVERAGE_ENV]: rawDir,
-            [ROOTS_ENV]: srcRoot,
-          }),
-        };
-        const result = spawnSync("covnoise", [], { encoding: "utf-8", env });
-        expect(result.stdout).toBe("one line\n");
-      } finally {
-        cleanup();
-      }
+      const install = await mockBin("covnoise", { stdout: ["one line"] });
+      const result = runMockedBin("covnoise", [], rawDir, srcRoot, install);
+      expect(result.stdout).toBe("one line\n");
 
-      // A crash mid-append leaves a torn trailing line behind; a killed
-      // child can leave a truncated profile. Neither may sink the
-      // merge for the artifacts that are intact.
+      // A crash mid-append leaves a torn trailing line behind; a
+      // killed child can leave a truncated profile. Neither may sink
+      // the merge for the artifacts that are intact.
       const transformFiles = readdirSync(rawDir).filter((name) =>
         /^transforms-.*\.jsonl$/.test(name),
       );

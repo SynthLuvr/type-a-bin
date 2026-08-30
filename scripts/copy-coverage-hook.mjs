@@ -1,5 +1,5 @@
-// Copies the plain-JS observer hook into dist so the published
-// package can point spawned children at it through the
+// Copies the plain-JS observer hook into dist so the published package
+// can load it in spawned children through the
 // `type-a-bin/subprocess-coverage/coverage-hook.mjs` subpath export.
 // Runs as part of build:lib — never compiles anything, keeping
 // installs deterministic and free of toolchain prerequisites.

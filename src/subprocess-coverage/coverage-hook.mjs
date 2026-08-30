@@ -1,19 +1,15 @@
-// Coverage observer for Node subprocesses, loaded via `--import`
-// (usually through NODE_OPTIONS) into every child that inherits the
-// test runner's environment. Raw NODE_V8_COVERAGE offsets point into
-// the code Node actually executed: under tsx that is esbuild output
-// carrying an inline source map, and under Node's own type stripping
-// it is the recorded source itself — the transform only erases syntax
-// in place, so offsets still address the original file. The hook
-// therefore records { url, code, map } per in-scope module — the code
-// the child really ran plus its inline source map when one exists —
-// which the vitest provider later uses to remap offsets onto the
-// original sources (see merge.ts).
+// Coverage observer loaded into every Node child that inherits the
+// test runner's environment (via NODE_OPTIONS --import). Records, per
+// in-scope module, the code the child actually executed plus its
+// inline source map when the loader produced one; the vitest provider
+// later uses those records to remap raw NODE_V8_COVERAGE offsets onto
+// the original sources (see merge.ts).
 //
 // Must stay fully synchronous (registerHooks, no await): an async load
 // hook breaks Node's synchronous load path (e.g. require(esm)) with
-// ERR_INVALID_RETURN_PROPERTY_VALUE. Capture failures are swallowed —
-// a broken observer must never take down a process under test.
+// ERR_INVALID_RETURN_PROPERTY_VALUE. All capture failures are
+// swallowed — a broken observer must never take down a process under
+// test.
 import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
 import { registerHooks } from "node:module";
@@ -24,23 +20,19 @@ const ROOTS_ENV = "TYPE_A_BIN_SUBPROCESS_COVERAGE_ROOTS";
 const SOURCE_MAP_MARKER = "//# sourceMappingURL=data:application/json;base64,";
 
 const rawDir = process.env.NODE_V8_COVERAGE ?? "";
-const cacheFile =
-  rawDir === ""
-    ? undefined
-    : join(
-        rawDir,
-        `transforms-${process.pid}-${randomBytes(4).toString("hex")}.jsonl`,
-      );
+const enabled = rawDir !== "";
+const cacheFile = enabled
+  ? join(
+      rawDir,
+      `transforms-${process.pid}-${randomBytes(4).toString("hex")}.jsonl`,
+    )
+  : undefined;
 const seen = new Set();
 
-// Only modules under these directories can become report entries, so
-// recording anything else is pure noise. The default scopes the
-// observer to the project the runner was started from; dependencies
-// under node_modules are excluded even when they sit inside a root.
-// Each root scopes by both its realpath and its literal form: Node's
-// ESM loader may report module URLs through either (Windows
-// short-name aliases like RUNNER~1, macOS /tmp symlinks), so a single
-// form would miss the modules the root names.
+// Scope by both the literal path and its realpath: Node's ESM loader
+// may report module URLs through either (Windows short-name aliases
+// like RUNNER~1, macOS /tmp symlinks). A root that does not exist yet
+// scopes by its literal form only.
 const toPrefixes = (root) => {
   const absolute = resolve(root.replace(/[\\/]+$/, ""));
   const literal = `${pathToFileURL(absolute).href}/`;
@@ -48,19 +40,21 @@ const toPrefixes = (root) => {
     const real = `${pathToFileURL(realpathSync(absolute)).href}/`;
     return real === literal ? [literal] : [literal, real];
   } catch {
-    // Root does not exist (yet): scope by the literal path.
     return [literal];
   }
 };
 
-const rootsEnv = process.env[ROOTS_ENV];
-const scopePrefixes =
-  cacheFile === undefined
-    ? []
-    : (rootsEnv === undefined || rootsEnv === "" ? process.cwd() : rootsEnv)
-        .split(delimiter)
-        .filter((root) => root !== "")
-        .flatMap(toPrefixes);
+// Only modules under the roots can become report entries, so
+// recording anything else is pure noise; node_modules is always
+// skipped. The default root is the working directory the runner
+// started from.
+const roots = process.env[ROOTS_ENV] || process.cwd();
+const scopePrefixes = enabled
+  ? roots
+      .split(delimiter)
+      .filter((root) => root !== "")
+      .flatMap(toPrefixes)
+  : [];
 
 const inScope = (url) =>
   typeof url === "string" &&
@@ -85,9 +79,10 @@ const record = (url, code) => {
   const map = extractInlineMap(code);
   try {
     mkdirSync(rawDir, { recursive: true });
+    // JSON.stringify omits `map` when it is undefined.
     appendFileSync(
       cacheFile,
-      `${JSON.stringify(map === undefined ? { url, code } : { url, code, map })}\n`,
+      `${JSON.stringify({ url, code, map })}\n`,
       "utf8",
     );
   } catch {
@@ -97,7 +92,7 @@ const record = (url, code) => {
 
 const load = (url, context, nextLoad) => {
   const result = nextLoad(url, context);
-  if (cacheFile !== undefined && !seen.has(url) && inScope(url)) {
+  if (!seen.has(url) && inScope(url)) {
     const source = result.source;
     // CommonJS-flavoured formats hand the source back as a Buffer.
     if (typeof source === "string" || Buffer.isBuffer(source)) {
@@ -108,4 +103,4 @@ const load = (url, context, nextLoad) => {
   return result;
 };
 
-if (cacheFile !== undefined) registerHooks({ load });
+if (enabled) registerHooks({ load });
