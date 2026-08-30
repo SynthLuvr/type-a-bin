@@ -14,6 +14,13 @@ import type { MockBehaviourScript } from "./mock-bin-behaviour-runtime.js";
 /** Default life of a mock kept alive on purpose, and of its child. */
 const LIFETIME_MS = 120_000;
 
+/** Default budget of `handle.waitForCall`, and how often it polls. */
+const WAIT_TIMEOUT_MS = 5_000;
+const WAIT_POLL_MS = 50;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 interface MockBinRecordOptions {
   /**
    * Read stdin to end-of-file and record it as `call.stdin`. Off by
@@ -82,9 +89,25 @@ interface MockBinCall {
  * invocations a scripted behaviour recorded. `calls` is read fresh on
  * every access — a still-running mock shows up as soon as it has been
  * recorded — and keeps serving the last reading after cleanup.
+ * `waitForCall` bridges the gap to asynchronous callers: a mock is
+ * invoked by another process, so its record lands some time after the
+ * spawn that caused it.
  */
 type MockBinHandle = MockBinCleanup & {
   readonly calls: MockBinCall[];
+  /**
+   * Resolves with the first recorded invocation for which `predicate`
+   * returns true, polling `calls` every 50ms until it appears. Omit
+   * the predicate to wait for any invocation. Rejects once `timeoutMs`
+   * (default 5000) passes without a match, listing the invocations
+   * recorded so far; once the mock is cleaned up the frozen snapshot
+   * is consulted, and a miss rejects at once — no new invocation can
+   * arrive after teardown.
+   */
+  readonly waitForCall: (
+    predicate?: (call: MockBinCall) => boolean,
+    timeoutMs?: number,
+  ) => Promise<MockBinCall>;
 };
 
 // The runtime twin ships next to this module: the .js build in the
@@ -156,10 +179,28 @@ const prepareBehaviour = async (
 };
 
 /**
+ * Parses one record, tolerating the states a writer running
+ * concurrently with the read can leave behind: a slot the runtime has
+ * claimed but not yet published reads as empty, and a truncated file
+ * cannot parse. Publishing is by atomic rename, so the latter "cannot
+ * happen" — reading it as absent anyway keeps the polling reader safe
+ * if that protocol ever loosens, instead of crashing mid-wait.
+ */
+const parseRecord = (file: string): MockBinCall | undefined => {
+  const content = readFileSync(file, "utf-8");
+  if (content === "") return undefined;
+  try {
+    return JSON.parse(content) as MockBinCall;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
  * Reads the recorded invocations in the order the mock was called: the
- * runtime numbers each record as it claims a slot. A claimed-but-empty
- * slot is skipped, and the `.json` suffix filters out records still
- * being written to their `.pending` sidecar.
+ * runtime numbers each record as it claims a slot. The `.json` suffix
+ * filters out records still being written to their `.pending` sidecar,
+ * and a slot caught mid-write is skipped until its record lands.
  */
 const readCalls = (recordDir: string): MockBinCall[] =>
   readdirSync(recordDir)
@@ -168,8 +209,8 @@ const readCalls = (recordDir: string): MockBinCall[] =>
       (left, right) => Number.parseInt(left, 10) - Number.parseInt(right, 10),
     )
     .flatMap((name) => {
-      const content = readFileSync(path.join(recordDir, name), "utf-8");
-      return content === "" ? [] : [JSON.parse(content) as MockBinCall];
+      const record = parseRecord(path.join(recordDir, name));
+      return record === undefined ? [] : [record];
     });
 
 /**
@@ -196,12 +237,57 @@ const withCalls = (
         retryDelay: 250,
       });
   };
+  // The one read both the `calls` getter and `waitForCall` poll: the
+  // snapshot once cleanup has frozen it, a fresh (mid-write-safe)
+  // reading of the record directory before that.
+  const currentCalls = (): MockBinCall[] => {
+    if (snapshot !== undefined) return snapshot;
+    return recordDir === undefined ? [] : readCalls(recordDir);
+  };
   Object.defineProperty(handle, "calls", {
     enumerable: true,
-    get: (): MockBinCall[] => {
-      if (snapshot !== undefined) return snapshot;
-      return recordDir === undefined ? [] : readCalls(recordDir);
-    },
+    get: currentCalls,
+  });
+  const describeRecorded = (): string => {
+    const calls = currentCalls();
+    return calls.length === 0
+      ? "none"
+      : calls.map((call) => JSON.stringify(call.args)).join(", ");
+  };
+  const waitForCall = async (
+    predicate?: (call: MockBinCall) => boolean,
+    timeoutMs?: number,
+  ): Promise<MockBinCall> => {
+    if (recordDir === undefined)
+      throw new Error(
+        "waitForCall: the behaviour records nothing, so no invocation " +
+          "can ever match",
+      );
+    const matches = predicate ?? ((): boolean => true);
+    const budgetMs = timeoutMs ?? WAIT_TIMEOUT_MS;
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const match = currentCalls().find(matches);
+      if (match !== undefined) return match;
+      // Cleanup freezes the records at their snapshot, so a miss can
+      // never turn into a hit — fail at once instead of burning the
+      // budget waiting for an invocation that cannot arrive.
+      if (snapshot !== undefined)
+        throw new Error(
+          "waitForCall: no invocation matched, and the mock is already " +
+            `cleaned up — calls recorded: ${describeRecorded()}`,
+        );
+      if (Date.now() >= deadline) break;
+      await sleep(WAIT_POLL_MS);
+    }
+    throw new Error(
+      "waitForCall: no invocation matched within " +
+        `${budgetMs}ms — calls recorded so far: ${describeRecorded()}`,
+    );
+  };
+  Object.defineProperty(handle, "waitForCall", {
+    enumerable: true,
+    value: waitForCall,
   });
   return handle as MockBinHandle;
 };
