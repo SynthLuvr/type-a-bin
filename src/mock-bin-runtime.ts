@@ -505,5 +505,6 @@ export {
   type MocksEnv,
   type MockTarget,
   type RunOriginalTarget,
+  runNodeEntryAsMain,
   runTrampoline,
 };
