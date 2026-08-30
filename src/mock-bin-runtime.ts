@@ -46,6 +46,21 @@ const stripCoverageHookFromNodeOptions = (nodeOptions: string): string => {
     .join(" ");
 };
 
+// Whether node itself loaded the observer at startup — true only while
+// an `--import` entry for it sits in NODE_OPTIONS. The trampoline
+// launcher never puts it on its own argv, so NODE_OPTIONS is the only
+// startup registration channel this dispatch can see.
+const hookPresentInNodeOptions = (nodeOptions: string): boolean => {
+  const hook = coverageHookUrl();
+  const tokens = nodeOptions.split(" ").filter((token) => token !== "");
+  return tokens.some(
+    (token, index) =>
+      token === hook ||
+      token === `--import=${hook}` ||
+      (token === "--import" && tokens[index + 1] === hook),
+  );
+};
+
 const HELPER_NAME = "mock-a-bin-run-original";
 const PATH_EXTENSIONS = ["", ".exe", ".cmd", ".bat", ".com"];
 const TS_EXTENSIONS = [".cts", ".mts", ".ts", ".tsx"];
@@ -371,16 +386,25 @@ const runNodeEntryAsMain = async (
     return;
   }
 
-  // An in-process tsx import would put the startup-registered observer
-  // below it in the LIFO hook chain, so under subprocess coverage the
-  // process restarts with loader-then-observer on the argv instead
-  // (argv --import runs after NODE_OPTIONS); the inherited entry is
-  // dropped in the restart so the earlier registration cannot win the
-  // hook module's one-shot load.
-  if (tsxImportUrl !== undefined && coverageOrderingNeeded())
+  // Under subprocess coverage the observer must sit above the tsx
+  // loader in the LIFO hook chain. A startup registration from an
+  // inherited NODE_OPTIONS entry cannot be re-ordered in-process (the
+  // hook module loads its loader once), so the process restarts with
+  // loader-then-observer on the argv instead, dropping the inherited
+  // entry so the earlier registration cannot win. When NODE_OPTIONS
+  // carries no hook, no startup registration exists: the observer is
+  // simply imported right here, after tsx — same ordering, no second
+  // node startup (the extra spawn was costing loaded CI runners
+  // seconds per mock invocation).
+  const needsRestart =
+    tsxImportUrl !== undefined &&
+    coverageOrderingNeeded() &&
+    hookPresentInNodeOptions(process.env.NODE_OPTIONS ?? "");
+  if (needsRestart)
     return restartWithOrderedObserver(entry, cliArgs, tsxImportUrl);
 
   if (tsxImportUrl !== undefined) await import(tsxImportUrl);
+  if (coverageOrderingNeeded()) await import(coverageHookUrl());
   await import(pathToFileURL(entry).href);
 };
 

@@ -6,6 +6,7 @@ import astV8ToIstanbul from "ast-v8-to-istanbul";
 import { parseAstAsync } from "vitest/node";
 import {
   coverageHookUrl,
+  hookPresentInNodeOptions,
   RAW_COVERAGE_ENV,
   stripCoverageHookFromNodeOptions,
 } from "./hook-url.js";
@@ -278,6 +279,7 @@ const mergeSubprocessCoverage = async (
 export type { MergeableCoverageMap, RemapFilter };
 export {
   coverageHookUrl,
+  hookPresentInNodeOptions,
   mergeSubprocessCoverage,
   RAW_COVERAGE_ENV,
   ROOTS_ENV,

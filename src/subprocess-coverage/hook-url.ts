@@ -14,6 +14,27 @@ const coverageHookUrl = (): string =>
   new URL("./coverage-hook.mjs", import.meta.url).href;
 
 /**
+ * Whether a NODE_OPTIONS value loads the observer hook, in either
+ * `--import` spelling (`--import <url>` and `--import=<url>`).
+ *
+ * A true answer means node registered the observer at startup, ahead
+ * of any loader a launcher imports in-process — the ordering only an
+ * ordered restart can undo. A false answer means no startup
+ * registration exists, so the launcher can import the observer itself,
+ * after its loaders, without a second process.
+ */
+const hookPresentInNodeOptions = (nodeOptions: string): boolean => {
+  const hook = coverageHookUrl();
+  const tokens = nodeOptions.split(" ").filter((token) => token !== "");
+  return tokens.some(
+    (token, index) =>
+      token === hook ||
+      token === `--import=${hook}` ||
+      (token === "--import" && tokens[index + 1] === hook),
+  );
+};
+
+/**
  * Removes the observer hook's `--import` entry (both `--import <url>`
  * and `--import=<url>`) from a NODE_OPTIONS value, leaving every other
  * option untouched.
@@ -38,4 +59,9 @@ const stripCoverageHookFromNodeOptions = (nodeOptions: string): string => {
     .join(" ");
 };
 
-export { coverageHookUrl, RAW_COVERAGE_ENV, stripCoverageHookFromNodeOptions };
+export {
+  coverageHookUrl,
+  hookPresentInNodeOptions,
+  RAW_COVERAGE_ENV,
+  stripCoverageHookFromNodeOptions,
+};
