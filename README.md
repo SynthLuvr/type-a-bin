@@ -16,7 +16,8 @@ injecting a mock script into your `PATH`.
 - **Total control over output and exit codes.** Return whatever stdout,
   stderr, and exit status your tests need.
 - **Invocation recording.** Scripted mocks record every call — argv,
-  cwd, env, even stdin — on `mock.calls` for assertions.
+  cwd, env, even stdin — on `mock.calls` for assertions, and
+  `mock.waitForCall()` awaits the call you care about.
 - **Conditional mocking.** Mock only the subcommands you care about and
   let everything else fall through to the real binary.
 - **Any interpreter.** Bash, Node, Python, Perl — if it has a shebang,
@@ -302,6 +303,31 @@ slow mock is still running. Reading stdin blocks until the caller closes
 it, so it is opt-in: `record: { stdin: true }` captures the full input
 as `call.stdin`, ideal for asserting the payload your code piped into
 the binary.
+
+A record lands on disk a beat after the spawn that caused it — the
+mocked process writes it itself — so reading `mock.calls` right after an
+asynchronous spawn races it. `waitForCall` polls `calls` until the
+invocation you care about appears, instead of every test hand-rolling
+that loop:
+
+``` ts
+const child = spawn("gh", ["pr", "create"], { stdio: "ignore" });
+
+// Resolves with the first matching invocation — even while a slow mock
+// is still answering. Rejects after the timeout (default 5000ms),
+// listing the invocations recorded so far.
+const call = await mock.waitForCall(
+  (invocation) => invocation.args[0] === "pr",
+);
+expect(call.args).toEqual(["pr", "create"]);
+```
+
+Omit the predicate to wait for any invocation. The poll is safe against
+records caught mid-write: a slot the mock claimed but has not published
+yet reads as absent and is picked up on a later pass. And after `mock()`
+tears the mock down, the wait consults the frozen snapshot — a match
+resolves at once, a miss rejects immediately instead of burning the
+timeout on invocations that can no longer arrive.
 
 The behaviour object scripts the whole response:
 
@@ -621,7 +647,13 @@ Runs a mock scripted entirely by the `behaviour` object — no
 interpreter, no script. Returns a `MockBinHandle`: the ordinary cleanup
 function, extended with a `calls` property holding every recorded
 invocation in call order. `calls` is read fresh on each access and keeps
-serving the last snapshot after cleanup.
+serving the last snapshot after cleanup. The handle also carries
+`waitForCall(predicate?, timeoutMs?)`, which polls `calls` until an
+invocation matching `predicate` appears (any invocation when it is
+omitted) and resolves with it — the race-free way to assert on a mock
+that a spawned process has not invoked yet. It rejects once `timeoutMs`
+(default 5000) passes without a match, listing the recorded invocations;
+see [Scripted behaviour](#4-scripted-behaviour).
 
 ### `withoutMocks(env)`
 
@@ -693,6 +725,16 @@ interface MockBinScriptFile {
 type MockBinHandle = MockBinCleanup & {
   /** Every recorded invocation, in call order. */
   readonly calls: MockBinCall[];
+  /**
+   * Resolves with the first recorded invocation matching the
+   * predicate, polling until it appears; rejects after `timeoutMs`
+   * (default 5000) with the invocations recorded so far. Omit the
+   * predicate to wait for any invocation.
+   */
+  readonly waitForCall: (
+    predicate?: (call: MockBinCall) => boolean,
+    timeoutMs?: number,
+  ) => Promise<MockBinCall>;
 };
 
 /** One recorded invocation of a scripted mock. */
