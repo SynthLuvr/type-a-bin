@@ -21,10 +21,10 @@ const invokeGhAfter = (
 ): ReturnType<typeof spawn> =>
   spawn(process.execPath, [
     "-e",
-    `const { spawnSync } = require("node:child_process");\n` +
-      `setTimeout(() => {\n` +
-      `  spawnSync("gh", ${JSON.stringify(args)}, { encoding: "utf-8" });\n` +
-      `}, ${delayMs});`,
+    `const { spawnSync } = require("node:child_process");
+setTimeout(() => {
+  spawnSync("gh", ${JSON.stringify(args)}, { encoding: "utf-8" });
+}, ${delayMs});`,
   ]);
 
 const fakeRecord = (args: string[]): MockBinCall => ({
@@ -39,9 +39,9 @@ describe("waitForCall", () => {
     const mock = await mockBin("gh", { stdout: "ok" });
     const started = Date.now();
     const child = invokeGhAfter(400, ["pr", "list"]);
-    // The waiter is registered up front: waitForCall can resolve after
-    // the child has already exited, and an "exit" listener attached
-    // then never fires.
+    // Registered up front: waitForCall can resolve after the child has
+    // already exited, and an "exit" listener attached that late never
+    // fires.
     const childDone = exited(child);
 
     const call = await mock.waitForCall(
@@ -50,8 +50,8 @@ describe("waitForCall", () => {
     );
 
     expect(call.args).toEqual(["pr", "list"]);
-    // The invocation only happens at 400ms, so a resolution this late
-    // proves the helper polled instead of reading `calls` once.
+    // The invocation happens at 400ms, so a match this late proves the
+    // helper polled rather than read `calls` once.
     expect(Date.now() - started).toBeGreaterThanOrEqual(350);
     await childDone;
     mock();
@@ -131,8 +131,7 @@ describe("waitForCall", () => {
     await expect(mock.waitForCall(undefined, 10_000)).rejects.toThrow(
       "records nothing",
     );
-    // The rejection is immediate, not the budget burning down.
-    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(Date.now() - started).toBeLessThan(5_000); // immediate
 
     mock();
   });
@@ -152,16 +151,14 @@ describe("waitForCall", () => {
     await expect(
       mock.waitForCall((candidate) => candidate.args.includes("nope"), 10_000),
     ).rejects.toThrow("already cleaned up");
-    // Teardown froze the records, so the miss rejects at once rather
-    // than waiting out a timeout that can never produce a match.
+    // Teardown froze the records, so the miss rejects at once.
     expect(Date.now() - started).toBeLessThan(5_000);
   });
 
   it("skips a slot a concurrent writer claimed but has not filled", async () => {
     const recordDir = await mkdtemp(path.join(tmpdir(), "type-a-bin-wfc-"));
-    // Two concurrent invocations genuinely leave this order behind: the
-    // first claimed slot 0 and is still describing itself (empty file),
-    // while the second already published its record.
+    // Slot 0 claimed but still being described (empty file), slot 1
+    // already published — the order two concurrent invocations leave.
     await writeFile(path.join(recordDir, "0.json"), "");
     const second = fakeRecord(["pr", "list"]);
     await writeFile(path.join(recordDir, "1.json"), JSON.stringify(second));
@@ -178,8 +175,7 @@ describe("waitForCall", () => {
 
   it("skips a record caught mid-write rather than crashing the wait", async () => {
     const recordDir = await mkdtemp(path.join(tmpdir(), "type-a-bin-wfc-"));
-    // A truncated slot-0 record: unreadable until its writer finishes,
-    // so the wait must read past it, not die on it.
+    // A truncated slot-0 record: the wait must read past it, not die on it.
     await writeFile(path.join(recordDir, "0.json"), '{"args":["pr",');
     const second = fakeRecord(["auth", "status"]);
     await writeFile(path.join(recordDir, "1.json"), JSON.stringify(second));
