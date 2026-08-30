@@ -62,6 +62,7 @@ fully typed, dependency-free library with richer features.
   - [`mockBin(...)`](#mockbin)
   - [`withoutMocks(env)`](#withoutmocksenv)
   - [`rmScratch(dir)`](#rmscratchdir)
+  - [`runCliAsMain(entry)`](#runcliasmainentry)
   - [Types](#types)
 - [Packages](#packages)
 - [Prerequisites](#prerequisites)
@@ -628,30 +629,31 @@ spawn:
     entry first, because the hook module registers its loader only once
     and the inherited entry would win that registration.
 
-A project’s own launcher that puts its loader on the child’s argv (a
-`bin/cli.mjs` that spawns `node --import tsx … src/cli.ts`) must apply
-the same rule itself:
+A project’s own launcher no longer needs to hand-roll any of this.
+`runCliAsMain`, exported from the dedicated
+`type-a-bin/subprocess-coverage/run-cli` subpath, applies both rules
+itself:
 
 ``` ts
-import {
-  coverageHookUrl,
-  stripCoverageHookFromNodeOptions,
-} from "type-a-bin/subprocess-coverage";
+#!/usr/bin/env node
+import { runCliAsMain } from "type-a-bin/subprocess-coverage/run-cli";
 
-const child = spawn(
-  process.execPath,
-  ["--import", tsxLoader, "--import", coverageHookUrl(), cli],
-  {
-    env: {
-      ...process.env,
-      // Without this, the inherited entry registers first and wins.
-      NODE_OPTIONS: stripCoverageHookFromNodeOptions(
-        process.env.NODE_OPTIONS ?? "",
-      ),
-    },
-  },
-);
+await runCliAsMain(new URL("../src/cli.ts", import.meta.url));
 ```
+
+The call captures `process.argv.slice(2)`, repositions argv so the entry
+reads its CLI arguments at `process.argv.slice(2)` like a script node
+started directly, resolves the tsx loader from the entry’s own package
+(node’s native type stripping covers projects without tsx), and loads
+the entry exactly the way type-a-bin loads its own mocks: a `.cjs` entry
+through `Module._load` with `require.main` set, anything else as ESM.
+While `TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR` is set the observer joins
+ordered above the loader — the restart above when the inherited
+`NODE_OPTIONS` carries the hook, the in-process import when it does not
+— and with propagation off no coverage machinery loads at all. The
+dedicated subpath is deliberate: it imports nothing beyond node’s own
+modules, so the launcher works in trees without vitest or the coverage
+toolchain installed.
 
 One known limitation: on the legacy Windows hard-link shims, CommonJS
 TypeScript entries load tsx in-process after the observer has
@@ -860,6 +862,21 @@ rmScratch(scratchDir); // never throws
 ```
 
 `mockBin` cleanup uses this helper internally on every platform.
+
+### `runCliAsMain(entry)`
+
+Runs a CLI entry as the process’s main module — the whole launcher shape
+a project’s `bin/*.mjs` needs under subprocess coverage (see [Subprocess
+coverage](#subprocess-coverage)). `entry` is the CLI’s real
+implementation, as a path or file URL; TypeScript entries load through
+the tsx loader resolved from the entry’s own package, `.cjs` entries
+through `Module._load` with `require.main` set. The returned promise
+settles when the entry’s top level finishes, and the process exits with
+whatever exit code the entry set.
+
+Import it from the dedicated `run-cli` subpath, which pulls in nothing
+beyond node’s own modules, so a launcher works without vitest or the
+coverage toolchain installed.
 
 ### Types
 

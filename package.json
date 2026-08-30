@@ -22,11 +22,13 @@
     "./subprocess-coverage/coverage-hook.mjs": "./dist/subprocess-coverage/coverage-hook.mjs",
     "./subprocess-coverage/provider": {
       "import": "./dist/subprocess-coverage/provider.js"
+    },
+    "./subprocess-coverage/run-cli": {
+      "types": "./dist/subprocess-coverage/run-cli.d.ts",
+      "import": "./dist/subprocess-coverage/run-cli.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": "==26"
