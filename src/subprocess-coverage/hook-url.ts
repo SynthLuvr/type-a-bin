@@ -13,25 +13,34 @@ const RAW_COVERAGE_ENV = "TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR";
 const coverageHookUrl = (): string =>
   new URL("./coverage-hook.mjs", import.meta.url).href;
 
+const nodeOptionTokens = (nodeOptions: string): string[] =>
+  nodeOptions.split(" ").filter((token) => token !== "");
+
+// Whether tokens[index] belongs to the observer's --import entry: the
+// flag of a spaced pair, the `--import=<url>` form, or the bare URL
+// such a pair leaves behind when the flag is removed.
+const isHookImportToken = (
+  hook: string,
+  tokens: string[],
+  index: number,
+): boolean =>
+  tokens[index] === hook ||
+  tokens[index] === `--import=${hook}` ||
+  (tokens[index] === "--import" && tokens[index + 1] === hook);
+
 /**
- * Whether a NODE_OPTIONS value loads the observer hook, in either
- * `--import` spelling (`--import <url>` and `--import=<url>`).
+ * Whether a NODE_OPTIONS value loads the observer hook at startup.
  *
- * A true answer means node registered the observer at startup, ahead
- * of any loader a launcher imports in-process — the ordering only an
- * ordered restart can undo. A false answer means no startup
- * registration exists, so the launcher can import the observer itself,
- * after its loaders, without a second process.
+ * A true answer means node registered the observer ahead of any loader
+ * a launcher imports in-process — the ordering only an ordered restart
+ * can undo. A false answer means no startup registration exists, so
+ * the launcher can import the observer itself, after its loaders,
+ * without a second process.
  */
 const hookPresentInNodeOptions = (nodeOptions: string): boolean => {
   const hook = coverageHookUrl();
-  const tokens = nodeOptions.split(" ").filter((token) => token !== "");
-  return tokens.some(
-    (token, index) =>
-      token === hook ||
-      token === `--import=${hook}` ||
-      (token === "--import" && tokens[index + 1] === hook),
-  );
+  const tokens = nodeOptionTokens(nodeOptions);
+  return tokens.some((_, index) => isHookImportToken(hook, tokens, index));
 };
 
 /**
@@ -48,14 +57,9 @@ const hookPresentInNodeOptions = (nodeOptions: string): boolean => {
  */
 const stripCoverageHookFromNodeOptions = (nodeOptions: string): string => {
   const hook = coverageHookUrl();
-  const tokens = nodeOptions.split(" ").filter((token) => token !== "");
+  const tokens = nodeOptionTokens(nodeOptions);
   return tokens
-    .filter(
-      (token, index) =>
-        token !== hook &&
-        token !== `--import=${hook}` &&
-        !(token === "--import" && tokens[index + 1] === hook),
-    )
+    .filter((_, index) => !isHookImportToken(hook, tokens, index))
     .join(" ");
 };
 
