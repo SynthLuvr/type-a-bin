@@ -4,6 +4,11 @@ import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import astV8ToIstanbul from "ast-v8-to-istanbul";
 import { parseAstAsync } from "vitest/node";
+import {
+  coverageHookUrl,
+  RAW_COVERAGE_ENV,
+  stripCoverageHookFromNodeOptions,
+} from "./hook-url.js";
 
 // Subprocess-coverage plumbing shared by the custom vitest provider
 // (provider.ts) and tests of the pipeline itself.
@@ -20,7 +25,6 @@ import { parseAstAsync } from "vitest/node";
 // are remapped onto the original sources and merged into vitest's
 // coverage map. Without the env var, propagation is off.
 
-const RAW_COVERAGE_ENV = "TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR";
 const ROOTS_ENV = "TYPE_A_BIN_SUBPROCESS_COVERAGE_ROOTS";
 
 const TS_EXTENSIONS = [".cts", ".mts", ".ts", ".tsx"];
@@ -32,17 +36,17 @@ const rawCoverageDir = (env = process.env): string | undefined => {
   return dir === undefined || dir === "" ? undefined : dir;
 };
 
-/** Absolute file URL of the observer hook shipped next to this module. */
-const coverageHookUrl = (): string =>
-  new URL("./coverage-hook.mjs", import.meta.url).href;
-
 // Environment that makes a child write raw profiles and load the
 // observer hook. Children inherit the runner's environment by default,
 // so applying this to the runner reaches every descendant; spreading
-// it into an explicit `env` covers the rest. The hook is prepended so
-// it registers before any `--import` already present (a tsx loader, a
-// preload) and observes those modules too. Idempotent: existing
-// NODE_OPTIONS that already load the hook pass through untouched.
+// it into an explicit `env` covers the rest. The hook is appended so
+// it registers after any `--import` loader already present:
+// registerHooks chains are LIFO, and only a hook registered after a
+// transforming loader sees its output — the code NODE_V8_COVERAGE
+// offsets address. A loader on the child's own argv still registers
+// after everything here, so such launchers must order the hook
+// themselves (see stripCoverageHookFromNodeOptions). Idempotent:
+// NODE_OPTIONS that already loads the hook passes through untouched.
 const subprocessCoverageEnv = (
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> => {
@@ -54,7 +58,7 @@ const subprocessCoverageEnv = (
     NODE_V8_COVERAGE: rawDir,
     NODE_OPTIONS: options.includes(hook)
       ? options
-      : `--import ${hook}${options === "" ? "" : ` ${options}`}`,
+      : [options, `--import ${hook}`].filter((part) => part !== "").join(" "),
   };
 };
 
@@ -278,5 +282,6 @@ export {
   RAW_COVERAGE_ENV,
   ROOTS_ENV,
   rawCoverageDir,
+  stripCoverageHookFromNodeOptions,
   subprocessCoverageEnv,
 };

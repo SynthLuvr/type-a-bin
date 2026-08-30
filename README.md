@@ -582,13 +582,15 @@ child that inherits the test runner’s environment.
 
 1.  When `TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR` names a directory, a
     custom vitest provider points the runner’s `NODE_V8_COVERAGE` at it
-    and loads a tiny observer hook through `NODE_OPTIONS`. Children
-    inherit both: Node’s built-in profiler then writes one raw profile
-    per child on exit, while the observer records the code each child
-    actually executed — for `.ts` modules loaded through tsx that is the
-    transpiled output plus its inline source map, and under Node’s own
-    type stripping it is the source itself, whose transform erases
-    syntax in place and preserves offsets.
+    and loads a tiny observer hook through `NODE_OPTIONS`, ordered after
+    any loaders already there (see [Observer
+    ordering](#observer-ordering)). Children inherit both: Node’s
+    built-in profiler then writes one raw profile per child on exit,
+    while the observer records the code each child actually executed —
+    for `.ts` modules loaded through tsx that is the transpiled output
+    plus its inline source map, and under Node’s own type stripping it
+    is the source itself, whose transform erases syntax in place and
+    preserves offsets.
 2.  At the end of the run the provider pairs each raw profile with the
     matching recorded transform, remaps the offsets onto the original
     sources, and merges the result into the run’s coverage map —
@@ -598,6 +600,61 @@ child that inherits the test runner’s environment.
 3.  Raw profiles are removed after a green run
     (`TYPE_A_BIN_KEEP_RAW_COVERAGE=1` keeps them for debugging); a
     failing run keeps them automatically.
+
+### Observer ordering
+
+`module.registerHooks` chains are LIFO: the last hook to register is the
+outermost, and only the outermost load hook sees the code a transforming
+loader (tsx and its esbuild) produces. A hook that registers *before*
+such a loader still observes the module — it records the pre-transform
+source — while `NODE_V8_COVERAGE` offsets address the transpiled output,
+silently mis-mapping the file onto wrong lines. Node also processes
+`NODE_OPTIONS` `--import` entries before any `--import` on the child’s
+own argv.
+
+Two rules follow, both applied for you wherever type-a-bin controls the
+spawn:
+
+1.  `subprocessCoverageEnv()` appends the observer after any `--import`
+    entries already present in `NODE_OPTIONS`, so a loader wired through
+    `NODE_OPTIONS` registers first and the observer wraps it.
+2.  TypeScript mocks that run through the tsx loader load the observer
+    after the loader explicitly — appended to the POSIX exec line, or
+    through an ordered restart from the Windows trampoline bootstrap —
+    and drop the inherited `NODE_OPTIONS` entry first, because the hook
+    module registers its loader only once and an inherited entry would
+    win that registration.
+
+A project’s own launcher that puts its loader on the child’s argv (a
+`bin/cli.mjs` that spawns `node --import tsx … src/cli.ts`) must apply
+the same rule itself:
+
+``` ts
+import {
+  coverageHookUrl,
+  stripCoverageHookFromNodeOptions,
+} from "type-a-bin/subprocess-coverage";
+
+const child = spawn(
+  process.execPath,
+  ["--import", tsxLoader, "--import", coverageHookUrl(), cli],
+  {
+    env: {
+      ...process.env,
+      // Without this, the inherited entry registers first and wins.
+      NODE_OPTIONS: stripCoverageHookFromNodeOptions(
+        process.env.NODE_OPTIONS ?? "",
+      ),
+    },
+  },
+);
+```
+
+One known limitation: on the legacy Windows hard-link shims, CommonJS
+TypeScript entries load tsx in-process after the observer has
+registered, so those records fall back to pre-transform source and
+best-effort offsets. The trampoline launcher — the default — is
+unaffected.
 
 ### Enabling it in a project
 
@@ -657,10 +714,11 @@ const result = execFileSync("my-cli", ["build"], {
   never be compiled, and so cannot be credited. Statement and line
   coverage stay accurate; function and branch percentages read lower
   than an in-process run would show.
-- The observer must register before a module loads to record it, so a
-  `--import` that runs ahead of it in `NODE_OPTIONS` escapes
-  observation. The composed environment loads the observer first for
-  exactly that reason.
+- The observer must register before a module loads to record it, so
+  preload modules named by `--import` entries that precede it in
+  `NODE_OPTIONS` escape observation — the price of ordering it after
+  loaders (see [Observer ordering](#observer-ordering)); the modules a
+  suite actually tests load long after startup and are unaffected.
 
 ## API reference
 

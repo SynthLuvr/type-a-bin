@@ -18,6 +18,34 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // node's own modules. The registry env var name is duplicated from
 // mock-bin-env for the same reason; the two must stay in sync.
 const MOCKS_VAR = "TYPE_A_BIN_MOCKS";
+
+// Subprocess coverage ordering: the observer hook must register after
+// the tsx loader — registerHooks chains are LIFO, so only the
+// last-registered hook sees the loader's transpiled output, which is
+// what NODE_V8_COVERAGE offsets address. Like MOCKS_VAR above, these
+// mirror the canonical copies in subprocess-coverage/hook-url.ts (the
+// runtime cannot import library modules); keep the two in sync.
+const RAW_COVERAGE_ENV = "TYPE_A_BIN_SUBPROCESS_COVERAGE_DIR";
+
+const coverageHookUrl = (): string =>
+  new URL("./subprocess-coverage/coverage-hook.mjs", import.meta.url).href;
+
+const coverageOrderingNeeded = (): boolean =>
+  (process.env[RAW_COVERAGE_ENV] ?? "") !== "";
+
+const stripCoverageHookFromNodeOptions = (nodeOptions: string): string => {
+  const hook = coverageHookUrl();
+  const tokens = nodeOptions.split(" ").filter((token) => token !== "");
+  return tokens
+    .filter(
+      (token, index) =>
+        token !== hook &&
+        token !== `--import=${hook}` &&
+        !(token === "--import" && tokens[index + 1] === hook),
+    )
+    .join(" ");
+};
+
 const HELPER_NAME = "mock-a-bin-run-original";
 const PATH_EXTENSIONS = ["", ".exe", ".cmd", ".bat", ".com"];
 const TS_EXTENSIONS = [".cts", ".mts", ".ts", ".tsx"];
@@ -288,6 +316,39 @@ const runEntryDirectly = async (
   );
 };
 
+// Restarts the process with the tsx loader and the coverage observer
+// as ordered argv imports; see runNodeEntryAsMain for why nothing
+// shorter works in-process.
+const restartWithOrderedObserver = (
+  entry: string,
+  cliArgs: string[],
+  tsxImportUrl: string,
+): never => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      tsxImportUrl,
+      "--import",
+      coverageHookUrl(),
+      entry,
+      ...cliArgs,
+    ],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        NODE_OPTIONS: stripCoverageHookFromNodeOptions(
+          process.env.NODE_OPTIONS ?? "",
+        ),
+      },
+    },
+  );
+  if (result.error !== undefined)
+    return fail(`Error: Failed to restart node for '${entry}'`);
+  process.exit(result.status ?? 1);
+};
+
 /**
  * Runs a node-kind mock entry as the process's main module from the
  * trampoline bootstrap. Unlike a shim, the process already has a real
@@ -309,6 +370,15 @@ const runNodeEntryAsMain = async (
     moduleApi._load(entry, null, true);
     return;
   }
+
+  // An in-process tsx import would put the startup-registered observer
+  // below it in the LIFO hook chain, so under subprocess coverage the
+  // process restarts with loader-then-observer on the argv instead
+  // (argv --import runs after NODE_OPTIONS); the inherited entry is
+  // dropped in the restart so the earlier registration cannot win the
+  // hook module's one-shot load.
+  if (tsxImportUrl !== undefined && coverageOrderingNeeded())
+    return restartWithOrderedObserver(entry, cliArgs, tsxImportUrl);
 
   if (tsxImportUrl !== undefined) await import(tsxImportUrl);
   await import(pathToFileURL(entry).href);

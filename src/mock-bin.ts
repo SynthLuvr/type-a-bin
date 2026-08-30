@@ -6,6 +6,11 @@ import { prepareBehaviour, withCalls } from "./mock-bin-behaviour.js";
 import { isTypeScriptFile, resolveTsxImportUrl } from "./mock-bin-tsx.js";
 import { mockBinWindows } from "./mock-bin-windows.js";
 import { rmScratch } from "./rm-scratch.js";
+import {
+  coverageHookUrl,
+  RAW_COVERAGE_ENV,
+  stripCoverageHookFromNodeOptions,
+} from "./subprocess-coverage/hook-url.js";
 
 type MockBinCleanup = () => void;
 
@@ -65,6 +70,39 @@ const resolveExistingFile = async (file: string): Promise<string> => {
   return resolvedFile;
 };
 
+// A node interpreter that loads a loader through --import must run the
+// coverage observer after it: registerHooks chains are LIFO, and only
+// a hook registered after a transforming loader sees the transpiled
+// code (and its inline source map) whose offsets the raw profile
+// addresses. Interpreters that already load the hook are left alone.
+const loadsLoaderThroughImport = (interpreter: string, hook: string): boolean =>
+  interpreter.includes("node") &&
+  interpreter.includes("--import") &&
+  !interpreter.includes(hook);
+
+// Wrapper that appends the observer to the exec line when the child
+// opts into subprocess coverage. NODE_OPTIONS is pinned to a
+// hook-stripped value because the hook module registers its loader
+// only once — an inherited --import entry would register ahead of the
+// interpreter's loaders and win. The branch runs in the child, not at
+// install time, because a suite may wire propagation only into the
+// spawned env.
+const observerOrderedBody = (
+  interpreter: string,
+  resolvedFile: string,
+): string => {
+  const nodeOptions = stripCoverageHookFromNodeOptions(
+    process.env.NODE_OPTIONS ?? "",
+  );
+  return [
+    `if [ -n "$${RAW_COVERAGE_ENV}" ]; then`,
+    `  NODE_OPTIONS="${nodeOptions}"`,
+    `  exec ${interpreter} --import ${coverageHookUrl()} "${resolvedFile}" "$@"`,
+    "fi",
+    `exec ${interpreter} "${resolvedFile}" "$@"`,
+  ].join("\n");
+};
+
 /**
  * Validates the script file exists, then builds an `exec` wrapper that
  * delegates to it through the given interpreter. The file keeps its real
@@ -81,6 +119,13 @@ const resolveScriptFile = async (
   const interpreter = shebang.startsWith("#!")
     ? shebang.slice(2).trim()
     : shebang;
+
+  const hook = coverageHookUrl();
+  if (loadsLoaderThroughImport(interpreter, hook))
+    return {
+      shebang: "#!/bin/sh",
+      body: observerOrderedBody(interpreter, resolvedFile),
+    };
 
   return {
     shebang: "#!/bin/sh",

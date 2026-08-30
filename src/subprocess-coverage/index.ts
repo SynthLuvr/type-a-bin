@@ -6,5 +6,6 @@ export {
   type RemapFilter,
   ROOTS_ENV,
   rawCoverageDir,
+  stripCoverageHookFromNodeOptions,
   subprocessCoverageEnv,
 } from "./merge.js";

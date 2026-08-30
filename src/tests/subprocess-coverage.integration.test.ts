@@ -15,12 +15,15 @@ import { fileURLToPath } from "node:url";
 import { createCoverageMap } from "istanbul-lib-coverage";
 import { describe, expect, it } from "vitest";
 import { type MockBinCleanup, mockBin } from "../mock-bin.js";
+import { MOCKS_VAR } from "../mock-bin-env.js";
+import { resolveTsxImportUrl } from "../mock-bin-tsx.js";
 import {
   coverageHookUrl,
   mergeSubprocessCoverage,
   RAW_COVERAGE_ENV,
   ROOTS_ENV,
   rawCoverageDir,
+  stripCoverageHookFromNodeOptions,
   subprocessCoverageEnv,
 } from "../subprocess-coverage/index.js";
 
@@ -58,6 +61,35 @@ const propagationEnv = (rawDir: string, roots: string) => {
     [ROOTS_ENV]: roots,
   };
   return { ...env, ...subprocessCoverageEnv(env) };
+};
+
+/** One transform record as the observer hook wrote it. */
+type RecordedTransform = { code: string; map?: { mappings: string } };
+
+/** Every transform record the children wrote into `rawDir`, parsed. */
+const recordedTransforms = (rawDir: string): RecordedTransform[] =>
+  readdirSync(rawDir)
+    .filter((name) => /^transforms-.*\.jsonl$/.test(name))
+    .flatMap((name) => readFileSync(join(rawDir, name), "utf8").split("\n"))
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as RecordedTransform);
+
+// An observer ordered after the loader records the transpiled output
+// with its inline source map; one registered before it records
+// pre-transform source — no map, type annotations intact.
+const expectTranspiledRecord = (
+  transforms: RecordedTransform[],
+  marker: string,
+  typeAnnotation: string,
+): void => {
+  const matching = transforms.filter((transform) =>
+    transform.code.includes(marker),
+  );
+  expect(matching.length).toBeGreaterThan(0);
+  for (const transform of matching) {
+    expect(transform.map?.mappings).toBeTruthy();
+    expect(transform.code).not.toContain(typeAnnotation);
+  }
 };
 
 // Spawns an installed mock once as a real binary and always
@@ -148,6 +180,15 @@ describe("subprocess coverage propagation", () => {
       const result = runMockedBin("covtsx", [], rawDir, scriptDir, install);
       expect(result.stdout).toBe("42\n");
 
+      // Ordered after the tsx loader, the observer records the
+      // transpiled output together with tsx's inline source map — the
+      // only recorded code whose offsets match the raw profile.
+      expectTranspiledRecord(
+        recordedTransforms(rawDir),
+        "const answer",
+        ": number",
+      );
+
       // The tsx loader transpiles the script (esbuild output, not the
       // source), so only the recorded inline source map can put the
       // hits back onto the original lines.
@@ -162,6 +203,78 @@ describe("subprocess coverage propagation", () => {
         .fileCoverageFor(script)
         .getLineCoverage();
       expect(lineCoverage[answerLine]).toBeGreaterThan(0);
+    } finally {
+      rmSync(rawDir, { recursive: true, force: true });
+      rmSync(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("orders the observer for trampoline-dispatched TypeScript targets", async () => {
+    const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-tr-"));
+    // Project-tree path (see the tsx test above) so realpaths pair.
+    const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-tr-"));
+    try {
+      writeFileSync(
+        path.join(scriptDir, "entry.ts"),
+        [
+          'const note = (): string => "reexec";',
+          "console.log(note());",
+          "",
+        ].join("\n"),
+      );
+      const entry = realpathSync(path.join(scriptDir, "entry.ts"));
+      const tsxImportUrl = resolveTsxImportUrl(entry);
+      expect(tsxImportUrl).not.toBeNull();
+
+      // The trampoline bootstrap's invocation shape: a CommonJS
+      // bootstrap calls runTrampoline, argv[2] names the invoked mock,
+      // the registry travels in MOCKS_VAR, and the runner's
+      // NODE_OPTIONS already loads the observer — exactly the
+      // inheritance that would otherwise register it before tsx.
+      const bootPath = path.join(scriptDir, "trampoline-boot.cjs");
+      writeFileSync(
+        bootPath,
+        `require(${JSON.stringify(
+          path.join(srcRoot, "mock-bin-runtime.ts"),
+        )}).runTrampoline();\n`,
+      );
+      const registry = {
+        targets: {
+          covtrampoline: {
+            kind: "node",
+            entry,
+            tsxImportUrl: tsxImportUrl ?? undefined,
+            originalPath: "",
+          },
+        },
+      };
+      const result = spawnSync(
+        process.execPath,
+        [bootPath, path.join(scriptDir, "covtrampoline.exe")],
+        {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            NODE_V8_COVERAGE: rawDir,
+            [RAW_COVERAGE_ENV]: rawDir,
+            [ROOTS_ENV]: scriptDir,
+            [MOCKS_VAR]: JSON.stringify(registry),
+            NODE_OPTIONS: `--import ${coverageHookUrl()}`,
+          },
+        },
+      );
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toBe("reexec\n");
+      expect(result.status).toBe(0);
+
+      // The restart must have put the observer after tsx: the recorded
+      // entry is the transpiled output, not the pre-transform source
+      // the startup-ordered observer would have written.
+      expectTranspiledRecord(
+        recordedTransforms(rawDir),
+        "const note",
+        ": string",
+      );
     } finally {
       rmSync(rawDir, { recursive: true, force: true });
       rmSync(scriptDir, { recursive: true, force: true });
@@ -209,12 +322,38 @@ describe("subprocess coverage propagation", () => {
       [RAW_COVERAGE_ENV]: "/tmp/raw",
     });
     expect(enabled.NODE_V8_COVERAGE).toBe("/tmp/raw");
-    expect(enabled.NODE_OPTIONS).toContain(`--import ${coverageHookUrl()}`);
+    expect(enabled.NODE_OPTIONS).toBe(`--import ${coverageHookUrl()}`);
 
     const again = subprocessCoverageEnv({
       [RAW_COVERAGE_ENV]: "/tmp/raw",
       NODE_OPTIONS: enabled.NODE_OPTIONS,
     });
     expect(again.NODE_OPTIONS).toBe(enabled.NODE_OPTIONS);
+  });
+
+  it("orders the observer after loaders already in NODE_OPTIONS", () => {
+    // registerHooks chains are LIFO, so the hook must register after a
+    // loader already present — appended, never prepended — or it
+    // records pre-transform source against transpiled offsets.
+    const loader = "--import /tmp/project-loader.mjs";
+    const ordered = subprocessCoverageEnv({
+      [RAW_COVERAGE_ENV]: "/tmp/raw",
+      NODE_OPTIONS: `${loader} --max-old-space-size=4096`,
+    });
+    expect(ordered.NODE_OPTIONS).toBe(
+      `${loader} --max-old-space-size=4096 --import ${coverageHookUrl()}`,
+    );
+
+    // Children that place the hook themselves must drop the inherited
+    // entry, or its earlier registration silently wins.
+    expect(stripCoverageHookFromNodeOptions(ordered.NODE_OPTIONS ?? "")).toBe(
+      `${loader} --max-old-space-size=4096`,
+    );
+    expect(
+      stripCoverageHookFromNodeOptions(
+        `--import=${coverageHookUrl()} ${loader}`,
+      ),
+    ).toBe(loader);
+    expect(stripCoverageHookFromNodeOptions("")).toBe("");
   });
 });
