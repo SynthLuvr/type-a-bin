@@ -367,8 +367,9 @@ const restartWithOrderedObserver = (
 };
 
 /**
- * Runs a node-kind mock entry as the process's main module from the
- * trampoline bootstrap. Unlike a shim, the process already has a real
+ * Runs a node-kind mock entry as the process's main module — the
+ * trampoline bootstrap's dispatch and, exported for it, the run-cli
+ * launcher facade. Unlike a shim, the process already has a real
  * main module (the bootstrap itself), so there is no REPL to avoid and
  * no entry redirection needed. CommonJS entries load through
  * `Module._load` with `isMain` set, so `require.main` matches a script

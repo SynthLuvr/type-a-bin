@@ -869,21 +869,14 @@ Runs a CLI entry as the process’s main module — the whole launcher shape
 a project’s `bin/*.mjs` needs under subprocess coverage (see [Subprocess
 coverage](#subprocess-coverage)). `entry` is the CLI’s real
 implementation, as a path or file URL; TypeScript entries load through
-the tsx loader resolved from the entry’s own package. The returned
-promise settles when the entry’s top level finishes, and the process
-exits with whatever exit code the entry set.
+the tsx loader resolved from the entry’s own package, `.cjs` entries
+through `Module._load` with `require.main` set. The returned promise
+settles when the entry’s top level finishes, and the process exits with
+whatever exit code the entry set.
 
-``` ts
-#!/usr/bin/env node
-import { runCliAsMain } from "type-a-bin/subprocess-coverage/run-cli";
-
-await runCliAsMain(new URL("../src/cli.ts", import.meta.url));
-```
-
-Import it from the dedicated `run-cli` subpath: unlike the package root
-or `subprocess-coverage` itself, it pulls in nothing beyond node’s own
-modules, so a launcher works without vitest or the coverage toolchain
-installed.
+Import it from the dedicated `run-cli` subpath, which pulls in nothing
+beyond node’s own modules, so a launcher works without vitest or the
+coverage toolchain installed.
 
 ### Types
 
