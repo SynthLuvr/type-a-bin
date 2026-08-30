@@ -1,6 +1,6 @@
 {
   "name": "type-a-bin",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Mock any executable binary for testing in Node.js",
   "license": "MIT",
   "repository": {
@@ -28,7 +28,9 @@
       "import": "./dist/subprocess-coverage/run-cli.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": "==26"
