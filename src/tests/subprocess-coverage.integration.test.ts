@@ -24,7 +24,6 @@ import {
   ROOTS_ENV,
   rawCoverageDir,
   stripCoverageHookFromNodeOptions,
-  subprocessCoverageEnabled,
   subprocessCoverageEnv,
 } from "../subprocess-coverage/index.js";
 
@@ -74,6 +73,24 @@ const recordedTransforms = (rawDir: string): RecordedTransform[] =>
     .flatMap((name) => readFileSync(join(rawDir, name), "utf8").split("\n"))
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as RecordedTransform);
+
+// An observer ordered after the loader records the transpiled output
+// with its inline source map; one registered before it records
+// pre-transform source — no map, type annotations intact.
+const expectTranspiledRecord = (
+  transforms: RecordedTransform[],
+  marker: string,
+  typeAnnotation: string,
+): void => {
+  const matching = transforms.filter((transform) =>
+    transform.code.includes(marker),
+  );
+  expect(matching.length).toBeGreaterThan(0);
+  for (const transform of matching) {
+    expect(transform.map?.mappings).toBeTruthy();
+    expect(transform.code).not.toContain(typeAnnotation);
+  }
+};
 
 // Spawns an installed mock once as a real binary and always
 // uninstalls it again.
@@ -165,17 +182,12 @@ describe("subprocess coverage propagation", () => {
 
       // Ordered after the tsx loader, the observer records the
       // transpiled output together with tsx's inline source map — the
-      // only recorded code whose offsets match the raw profile. An
-      // observer registered before the loader records pre-transform
-      // source with no map and silently mis-remaps every line.
-      const scriptRecords = recordedTransforms(rawDir).filter((transform) =>
-        transform.code.includes("const answer"),
+      // only recorded code whose offsets match the raw profile.
+      expectTranspiledRecord(
+        recordedTransforms(rawDir),
+        "const answer",
+        ": number",
       );
-      expect(scriptRecords.length).toBeGreaterThan(0);
-      for (const transform of scriptRecords) {
-        expect(transform.map?.mappings).toBeTruthy();
-        expect(transform.code).not.toContain(": number");
-      }
 
       // The tsx loader transpiles the script (esbuild output, not the
       // source), so only the recorded inline source map can put the
@@ -256,17 +268,13 @@ describe("subprocess coverage propagation", () => {
       expect(result.status).toBe(0);
 
       // The restart must have put the observer after tsx: the recorded
-      // entry is the transpiled output carrying an inline source map,
-      // not the pre-transform source the startup-ordered observer
-      // would have written.
-      const entryRecords = recordedTransforms(rawDir).filter((transform) =>
-        transform.code.includes("const note"),
+      // entry is the transpiled output, not the pre-transform source
+      // the startup-ordered observer would have written.
+      expectTranspiledRecord(
+        recordedTransforms(rawDir),
+        "const note",
+        ": string",
       );
-      expect(entryRecords.length).toBeGreaterThan(0);
-      for (const transform of entryRecords) {
-        expect(transform.map?.mappings).toBeTruthy();
-        expect(transform.code).not.toContain(": string");
-      }
     } finally {
       rmSync(rawDir, { recursive: true, force: true });
       rmSync(scriptDir, { recursive: true, force: true });
@@ -309,7 +317,6 @@ describe("subprocess coverage propagation", () => {
   it("composes the child environment idempotently and only when on", () => {
     expect(subprocessCoverageEnv({})).toEqual({});
     expect(rawCoverageDir({})).toBeUndefined();
-    expect(subprocessCoverageEnabled({})).toBe(false);
 
     const enabled = subprocessCoverageEnv({
       [RAW_COVERAGE_ENV]: "/tmp/raw",
@@ -325,10 +332,6 @@ describe("subprocess coverage propagation", () => {
   });
 
   it("orders the observer after loaders already in NODE_OPTIONS", () => {
-    expect(subprocessCoverageEnabled({ [RAW_COVERAGE_ENV]: "/tmp/raw" })).toBe(
-      true,
-    );
-
     // registerHooks chains are LIFO, so the hook must register after a
     // loader already present — appended, never prepended — or it
     // records pre-transform source against transpiled offsets.

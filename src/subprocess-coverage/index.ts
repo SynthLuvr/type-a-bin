@@ -7,6 +7,5 @@ export {
   ROOTS_ENV,
   rawCoverageDir,
   stripCoverageHookFromNodeOptions,
-  subprocessCoverageEnabled,
   subprocessCoverageEnv,
 } from "./merge.js";

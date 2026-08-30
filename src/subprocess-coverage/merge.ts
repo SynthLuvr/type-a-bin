@@ -8,7 +8,6 @@ import {
   coverageHookUrl,
   RAW_COVERAGE_ENV,
   stripCoverageHookFromNodeOptions,
-  subprocessCoverageEnabled,
 } from "./hook-url.js";
 
 // Subprocess-coverage plumbing shared by the custom vitest provider
@@ -41,17 +40,13 @@ const rawCoverageDir = (env = process.env): string | undefined => {
 // observer hook. Children inherit the runner's environment by default,
 // so applying this to the runner reaches every descendant; spreading
 // it into an explicit `env` covers the rest. The hook is appended so
-// it registers after any `--import` already present in NODE_OPTIONS (a
-// tsx loader, a preload): registerHooks chains are LIFO, so the
-// last-registered hook is outermost and alone sees the code a
-// transforming loader produces — a hook registered before the loader
-// records pre-transform source while NODE_V8_COVERAGE offsets address
-// the transpiled output, silently mis-mapping the file. A loader on
-// the child's own argv still registers after everything in
-// NODE_OPTIONS, so such launchers must order the hook themselves (see
-// coverageHookUrl and stripCoverageHookFromNodeOptions). Idempotent:
-// existing NODE_OPTIONS that already load the hook pass through
-// untouched.
+// it registers after any `--import` loader already present:
+// registerHooks chains are LIFO, and only a hook registered after a
+// transforming loader sees its output — the code NODE_V8_COVERAGE
+// offsets address. A loader on the child's own argv still registers
+// after everything here, so such launchers must order the hook
+// themselves (see stripCoverageHookFromNodeOptions). Idempotent:
+// NODE_OPTIONS that already loads the hook passes through untouched.
 const subprocessCoverageEnv = (
   env: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> => {
@@ -63,7 +58,7 @@ const subprocessCoverageEnv = (
     NODE_V8_COVERAGE: rawDir,
     NODE_OPTIONS: options.includes(hook)
       ? options
-      : `${options === "" ? "" : `${options} `}--import ${hook}`,
+      : [options, `--import ${hook}`].filter((part) => part !== "").join(" "),
   };
 };
 
@@ -288,6 +283,5 @@ export {
   ROOTS_ENV,
   rawCoverageDir,
   stripCoverageHookFromNodeOptions,
-  subprocessCoverageEnabled,
   subprocessCoverageEnv,
 };

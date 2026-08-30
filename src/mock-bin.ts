@@ -70,6 +70,39 @@ const resolveExistingFile = async (file: string): Promise<string> => {
   return resolvedFile;
 };
 
+// A node interpreter that loads a loader through --import must run the
+// coverage observer after it: registerHooks chains are LIFO, and only
+// a hook registered after a transforming loader sees the transpiled
+// code (and its inline source map) whose offsets the raw profile
+// addresses. Interpreters that already load the hook are left alone.
+const loadsLoaderThroughImport = (interpreter: string, hook: string): boolean =>
+  interpreter.includes("node") &&
+  interpreter.includes("--import") &&
+  !interpreter.includes(hook);
+
+// Wrapper that appends the observer to the exec line when the child
+// opts into subprocess coverage. NODE_OPTIONS is pinned to a
+// hook-stripped value because the hook module registers its loader
+// only once — an inherited --import entry would register ahead of the
+// interpreter's loaders and win. The branch runs in the child, not at
+// install time, because a suite may wire propagation only into the
+// spawned env.
+const observerOrderedBody = (
+  interpreter: string,
+  resolvedFile: string,
+): string => {
+  const nodeOptions = stripCoverageHookFromNodeOptions(
+    process.env.NODE_OPTIONS ?? "",
+  );
+  return [
+    `if [ -n "$${RAW_COVERAGE_ENV}" ]; then`,
+    `  NODE_OPTIONS="${nodeOptions}"`,
+    `  exec ${interpreter} --import ${coverageHookUrl()} "${resolvedFile}" "$@"`,
+    "fi",
+    `exec ${interpreter} "${resolvedFile}" "$@"`,
+  ].join("\n");
+};
+
 /**
  * Validates the script file exists, then builds an `exec` wrapper that
  * delegates to it through the given interpreter. The file keeps its real
@@ -87,32 +120,11 @@ const resolveScriptFile = async (
     ? shebang.slice(2).trim()
     : shebang;
 
-  // A node interpreter that loads loaders through --import needs the
-  // coverage observer after them when subprocess coverage is on:
-  // registerHooks chains are LIFO, so only the last import sees the
-  // transpiled code (and its inline source map) whose offsets the raw
-  // profile addresses. The branch is decided in the child, not at
-  // install time, because a suite may wire propagation only into the
-  // spawned env — and the inherited NODE_OPTIONS entry for the hook is
-  // replaced with a stripped value there, since loaded from
-  // NODE_OPTIONS it would register before the loaders and win the hook
-  // module's one-shot registration.
   const hook = coverageHookUrl();
-  if (
-    interpreter.includes("node") &&
-    interpreter.includes("--import") &&
-    !interpreter.includes(hook)
-  )
+  if (loadsLoaderThroughImport(interpreter, hook))
     return {
       shebang: "#!/bin/sh",
-      body:
-        `if [ -n "$${RAW_COVERAGE_ENV}" ]; then\n` +
-        `  NODE_OPTIONS="${stripCoverageHookFromNodeOptions(
-          process.env.NODE_OPTIONS ?? "",
-        )}"\n` +
-        `  exec ${interpreter} --import ${hook} "${resolvedFile}" "$@"\n` +
-        `fi\n` +
-        `exec ${interpreter} "${resolvedFile}" "$@"`,
+      body: observerOrderedBody(interpreter, resolvedFile),
     };
 
   return {
