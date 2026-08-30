@@ -6,6 +6,11 @@ import { prepareBehaviour, withCalls } from "./mock-bin-behaviour.js";
 import { isTypeScriptFile, resolveTsxImportUrl } from "./mock-bin-tsx.js";
 import { mockBinWindows } from "./mock-bin-windows.js";
 import { rmScratch } from "./rm-scratch.js";
+import {
+  coverageHookUrl,
+  RAW_COVERAGE_ENV,
+  stripCoverageHookFromNodeOptions,
+} from "./subprocess-coverage/hook-url.js";
 
 type MockBinCleanup = () => void;
 
@@ -81,6 +86,34 @@ const resolveScriptFile = async (
   const interpreter = shebang.startsWith("#!")
     ? shebang.slice(2).trim()
     : shebang;
+
+  // A node interpreter that loads loaders through --import needs the
+  // coverage observer after them when subprocess coverage is on:
+  // registerHooks chains are LIFO, so only the last import sees the
+  // transpiled code (and its inline source map) whose offsets the raw
+  // profile addresses. The branch is decided in the child, not at
+  // install time, because a suite may wire propagation only into the
+  // spawned env — and the inherited NODE_OPTIONS entry for the hook is
+  // replaced with a stripped value there, since loaded from
+  // NODE_OPTIONS it would register before the loaders and win the hook
+  // module's one-shot registration.
+  const hook = coverageHookUrl();
+  if (
+    interpreter.includes("node") &&
+    interpreter.includes("--import") &&
+    !interpreter.includes(hook)
+  )
+    return {
+      shebang: "#!/bin/sh",
+      body:
+        `if [ -n "$${RAW_COVERAGE_ENV}" ]; then\n` +
+        `  NODE_OPTIONS="${stripCoverageHookFromNodeOptions(
+          process.env.NODE_OPTIONS ?? "",
+        )}"\n` +
+        `  exec ${interpreter} --import ${hook} "${resolvedFile}" "$@"\n` +
+        `fi\n` +
+        `exec ${interpreter} "${resolvedFile}" "$@"`,
+    };
 
   return {
     shebang: "#!/bin/sh",

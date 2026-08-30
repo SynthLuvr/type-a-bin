@@ -24,9 +24,7 @@
       "import": "./dist/subprocess-coverage/provider.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": "==26"
