@@ -45,11 +45,15 @@ beforeAll(async () => {
   };
   const importOption = `--import ${preloadUrl}`;
   const previousNodeOptions = process.env.NODE_OPTIONS;
+  // The propagation observer travels in the inherited NODE_OPTIONS;
+  // appending the preload after it lets the observer register first,
+  // so the preload — and the runtime it loads — are recorded like any
+  // other module.
   shimEnv = {
     ...process.env,
     [MOCKS_VAR]: JSON.stringify(registry),
     NODE_OPTIONS: previousNodeOptions
-      ? `${importOption} ${previousNodeOptions}`
+      ? `${previousNodeOptions} ${importOption}`
       : importOption,
   };
 });
