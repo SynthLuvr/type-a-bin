@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createCoverageMap } from "istanbul-lib-coverage";
 import { describe, expect, it } from "vitest";
 import { type MockBinCleanup, mockBin } from "../mock-bin.js";
@@ -77,6 +77,68 @@ const recordedTransforms = (rawDir: string): RecordedTransform[] =>
     .flatMap((name) => readFileSync(join(rawDir, name), "utf8").split("\n"))
     .filter((line) => line.trim() !== "")
     .map((line) => JSON.parse(line) as RecordedTransform);
+
+// Hand-crafted raw artifacts for the pairing tests: the pids, the
+// transform shapes, and the profile offsets are written directly, so
+// the assertions exercise exactly the situation the merge must pair
+// correctly — several processes, different-shaped transforms for one
+// URL — without spawning two real transform pipelines.
+type CraftedMap = {
+  version: number;
+  file: string;
+  sources: string[];
+  mappings: number[][][];
+};
+
+type CraftedRecord = { url: string; code: string; map?: CraftedMap };
+
+// A sourcemap whose decoded segments map every line of `code` onto
+// the same line of the original file — the shape a loader's inline
+// map carries, without needing real transpilation.
+const identityMap = (url: string, code: string): CraftedMap => ({
+  version: 3,
+  file: url,
+  sources: [url],
+  mappings: code
+    .split("\n")
+    .slice(0, -1)
+    .map((_, line) => [[0, 0, line, 0]]),
+});
+
+/** One transforms-<pid>-<suffix>.jsonl file as the observer writes it. */
+const writeTransforms = (
+  rawDir: string,
+  pid: string,
+  suffix: string,
+  records: CraftedRecord[],
+): void => {
+  const lines = records.map((record) => JSON.stringify(record));
+  writeFileSync(
+    join(rawDir, `transforms-${pid}-${suffix}.jsonl`),
+    `${lines.join("\n")}\n`,
+  );
+};
+
+/** One coverage-<pid>-<suffix>.json profile with a single block hit. */
+const writeProfile = (
+  rawDir: string,
+  pid: string,
+  suffix: string,
+  url: string,
+  ranges: { startOffset: number; endOffset: number; count: number }[],
+): void => {
+  writeFileSync(
+    join(rawDir, `coverage-${pid}-${suffix}.json`),
+    JSON.stringify({
+      result: [
+        {
+          url,
+          functions: [{ functionName: "", ranges, isBlockCoverage: true }],
+        },
+      ],
+    }),
+  );
+};
 
 // An observer ordered after the loader records the transpiled output
 // with its inline source map; one registered before it records
@@ -256,6 +318,95 @@ describe("subprocess coverage propagation", () => {
         .fileCoverageFor(script)
         .getLineCoverage();
       expect(lineCoverage[answerLine]).toBeGreaterThan(0);
+    } finally {
+      rmSync(rawDir, { recursive: true, force: true });
+      rmSync(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("pairs each profile with the transform its own pid recorded", async () => {
+    const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-pid-"));
+    // Project-tree path (see the tsx test above) so realpaths pair.
+    const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-pid-"));
+    try {
+      // The file on disk only has to exist and pass the include
+      // filter; each record carries the code its own pid compiled.
+      writeFileSync(path.join(scriptDir, "script.ts"), "const pad = 1;\n");
+      const script = realpathSync(path.join(scriptDir, "script.ts"));
+      const url = pathToFileURL(script).href;
+
+      // Two pipelines, different-shaped code for one URL: pid 100 ran
+      // a two-statement layout, pid 200 a blank-prefixed one whose
+      // only statement sits on line 3. Each profile's offsets address
+      // its own pid's code — both hits land on a `y()` statement.
+      writeTransforms(rawDir, "100", "aaa", [{ url, code: "y();\nz();\n" }]);
+      writeTransforms(rawDir, "200", "bbb", [{ url, code: "\n\ny();\n" }]);
+      writeProfile(rawDir, "100", "ccc", url, [
+        { startOffset: 0, endOffset: 5, count: 1 },
+      ]);
+      writeProfile(rawDir, "200", "ddd", url, [
+        { startOffset: 2, endOffset: 7, count: 1 },
+      ]);
+
+      const coverageMap = createCoverageMap();
+      const merged = await mergeSubprocessCoverage(
+        coverageMap,
+        rawDir,
+        (file) => file === script,
+      );
+      expect(merged).toBe(1);
+      const lineCoverage = coverageMap
+        .fileCoverageFor(script)
+        .getLineCoverage();
+      // Per-pid pairing puts pid 100's hit on its line 1 and pid
+      // 200's on its line 3. One shared record misplaces one of them:
+      // against pid 100's layout pid 200's offsets cover line 2 (the
+      // `z()` statement), against pid 200's layout pid 100's hit
+      // never reaches line 1 at all.
+      expect(lineCoverage[1]).toBeGreaterThan(0);
+      expect(lineCoverage[3]).toBeGreaterThan(0);
+      expect(lineCoverage[2] ?? 0).toBe(0);
+    } finally {
+      rmSync(rawDir, { recursive: true, force: true });
+      rmSync(scriptDir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the map-bearing transform for a pid that recorded none", async () => {
+    const rawDir = mkdtempSync(path.join(tmpdir(), "type-a-bin-subcov-fb-"));
+    // Project-tree path (see the tsx test above) so realpaths pair.
+    const scriptDir = mkdtempSync(path.join(srcRoot, ".subcov-fb-"));
+    try {
+      writeFileSync(path.join(scriptDir, "script.ts"), "const pad = 1;\n");
+      const script = realpathSync(path.join(scriptDir, "script.ts"));
+      const url = pathToFileURL(script).href;
+
+      // The map-less record's file sorts first, but the fallback must
+      // pick the map-bearing one — the loader-transpiled shape whose
+      // offsets the profiler addresses. Pid 300 wrote a profile but
+      // no transforms, so it converts against that fallback.
+      writeTransforms(rawDir, "100", "aaa", [{ url, code: "y();\nz();\n" }]);
+      writeTransforms(rawDir, "200", "zzz", [
+        { url, code: "\n\ny();\n", map: identityMap(url, "\n\ny();\n") },
+      ]);
+      writeProfile(rawDir, "300", "xxx", url, [
+        { startOffset: 2, endOffset: 7, count: 1 },
+      ]);
+
+      const coverageMap = createCoverageMap();
+      const merged = await mergeSubprocessCoverage(
+        coverageMap,
+        rawDir,
+        (file) => file === script,
+      );
+      expect(merged).toBe(1);
+      const lineCoverage = coverageMap
+        .fileCoverageFor(script)
+        .getLineCoverage();
+      // Through the map the hit lands on line 3; had the map-less
+      // record won instead, the same offsets would cover line 2.
+      expect(lineCoverage[3]).toBeGreaterThan(0);
+      expect(lineCoverage[2] ?? 0).toBe(0);
     } finally {
       rmSync(rawDir, { recursive: true, force: true });
       rmSync(scriptDir, { recursive: true, force: true });

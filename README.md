@@ -593,11 +593,16 @@ child that inherits the test runner’s environment.
     is the source itself, whose transform erases syntax in place and
     preserves offsets.
 2.  At the end of the run the provider pairs each raw profile with the
-    matching recorded transform, remaps the offsets onto the original
-    sources, and merges the result into the run’s coverage map —
-    respecting `coverage.include`/`exclude` exactly like in-process
-    collection, so child-only files appear in the same report and the
-    same thresholds.
+    transforms its own process recorded — profile and transform file
+    names both carry the writing pid, so offsets never convert against a
+    different pipeline’s code — remaps them onto the original sources,
+    and merges the result into the run’s coverage map, respecting
+    `coverage.include`/`exclude` exactly like in-process collection, so
+    child-only files appear in the same report and the same thresholds.
+    A pid that recorded no transform (a file lost mid-write, a stale
+    profile a failed run left behind) converts against a deterministic
+    fallback that prefers source-map-bearing records, so identical
+    inputs produce identical reports.
 3.  Raw profiles are removed after a green run
     (`TYPE_A_BIN_KEEP_RAW_COVERAGE=1` keeps them for debugging); a
     failing run keeps them automatically.

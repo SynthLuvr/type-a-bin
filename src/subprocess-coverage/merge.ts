@@ -108,21 +108,59 @@ const readTransformLines = (file: string): TransformRecord[] => {
   return records.filter((record) => typeof record.url === "string");
 };
 
-// Transforms recorded by coverage-hook.mjs; the first record per URL
-// wins. Also reports the pids that recorded transforms: raw profiles
-// are named coverage-<pid>-…, and every Node process that inherited
-// NODE_V8_COVERAGE writes one (helper `node -e` children, tooling
-// processes) — only the pids that recorded a transform are
-// remappable, the rest are noise.
-const readTransforms = (
-  dir: string,
-): { byUrl: Map<string, TransformRecord>; pids: Set<string> } => {
-  const files = readdirSync(dir).filter((name) => TRANSFORM_FILE.test(name));
-  const byUrl = new Map<string, TransformRecord>();
-  for (const name of files)
-    for (const record of readTransformLines(join(dir, name)))
-      if (!byUrl.has(record.url)) byUrl.set(record.url, record);
-  return { byUrl, pids: new Set(files.map(pidOf)) };
+// Transforms recorded by coverage-hook.mjs, grouped by the pid that
+// recorded them plus a deterministic per-URL fallback. Raw profiles
+// are named coverage-<pid>-… and their offsets address the code that
+// same process compiled: one child can load a module through tsx
+// (transpiled, with a source map) while another runs it through
+// Node's native type stripping (types erased in place), and either
+// record misaligns the other's snapshot — at branch-slot granularity
+// first, whole statements only later. Pids that recorded no transform
+// (a file lost mid-write, a stale profile a failed run left behind)
+// share the fallback.
+type TransformRecords = {
+  byPid: Map<string, Map<string, TransformRecord>>;
+  fallback: Map<string, TransformRecord>;
+};
+
+// First record per URL wins, except that a record carrying a source
+// map displaces a map-less incumbent: when two pipelines (or two
+// observer copies) recorded one URL, the map-bearing record is the
+// transpiled output whose offsets the profiler addressed. Files are
+// read in sorted order, so the winner is a function of the directory's
+// contents alone, never of readdir order.
+const keepPreferred = (
+  records: Map<string, TransformRecord>,
+  candidate: TransformRecord,
+): void => {
+  const incumbent = records.get(candidate.url);
+  if (
+    incumbent === undefined ||
+    (incumbent.map === undefined && candidate.map !== undefined)
+  )
+    records.set(candidate.url, candidate);
+};
+
+const readTransforms = (dir: string): TransformRecords => {
+  const files = readdirSync(dir)
+    .filter((name) => TRANSFORM_FILE.test(name))
+    .sort();
+  const byPid = new Map<string, Map<string, TransformRecord>>();
+  const fallback = new Map<string, TransformRecord>();
+  for (const name of files) {
+    const records = readTransformLines(join(dir, name));
+    // A pid whose every line is torn recorded nothing; its profiles
+    // fall back rather than pair with an empty map.
+    if (records.length === 0) continue;
+    const pid = pidOf(name);
+    const own = byPid.get(pid) ?? new Map<string, TransformRecord>();
+    byPid.set(pid, own);
+    for (const record of records) {
+      keepPreferred(own, record);
+      keepPreferred(fallback, record);
+    }
+  }
+  return { byPid, fallback };
 };
 
 // A raw profile Node writes on process exit; an unparseable file
@@ -138,24 +176,26 @@ const readProfileScripts = (file: string): RawScriptCoverage[] => {
   }
 };
 
-// Per-URL function coverages grouped per profile file: each child
-// writes its own profile on exit, and each profile must be converted
-// on its own — a single conversion over concatenated entries loses
-// hits, because a reappearing function name overwrites whatever an
-// earlier child's snapshot credited. Merging the per-child results
-// through istanbul unions them, and istanbul only distinguishes hit
-// (>0) from unhit (0), so the union never flips a covered statement
-// back to uncovered.
-const readRawProfiles = (
-  dir: string,
-  pids: Set<string>,
-): RawScriptCoverage[][] =>
+/** One raw profile, tagged with the pid that wrote it. */
+type RawProfile = { pid: string; scripts: RawScriptCoverage[] };
+
+// Per-URL function coverages grouped per profile file, each tagged
+// with the pid that wrote it so the merge can pair the profile with
+// that pid's transform records. Each child writes its own profile on
+// exit, and each profile must be converted on its own — a single
+// conversion over concatenated entries loses hits, because a
+// reappearing function name overwrites whatever an earlier child's
+// snapshot credited. Merging the per-child results through istanbul
+// unions them, and istanbul only distinguishes hit (>0) from unhit
+// (0), so the union never flips a covered statement back to
+// uncovered.
+const readRawProfiles = (dir: string): RawProfile[] =>
   readdirSync(dir)
-    .filter(
-      (name) =>
-        PROFILE_FILE.test(name) && (pids.size === 0 || pids.has(pidOf(name))),
-    )
-    .map((name) => readProfileScripts(join(dir, name)));
+    .filter((name) => PROFILE_FILE.test(name))
+    .map((name) => ({
+      pid: pidOf(name),
+      scripts: readProfileScripts(join(dir, name)),
+    }));
 
 const extensionOf = (url: string): string => {
   const base = basename(fileURLToPath(url));
@@ -243,6 +283,26 @@ const convertSnapshot = async (
   }
 };
 
+// Converts each snapshot `profile` holds of `url` against `prepared`
+// and merges the results into `coverageMap`; true when at least one
+// snapshot contributed.
+const mergeProfileSnapshots = async (
+  coverageMap: MergeableCoverageMap,
+  url: string,
+  prepared: PreparedScript,
+  profile: RawProfile,
+): Promise<boolean> => {
+  let contributed = false;
+  for (const script of profile.scripts) {
+    if (script.url !== url) continue;
+    const data = await convertSnapshot(url, script.functions, prepared);
+    if (data === undefined) continue;
+    coverageMap.merge(data);
+    contributed = true;
+  }
+  return contributed;
+};
+
 // Merges raw subprocess coverage into `coverageMap`. `isIncluded` is
 // the provider's include/exclude filter, so the merge respects
 // coverage.include exactly like in-process collection. URLs without a
@@ -256,24 +316,40 @@ const mergeSubprocessCoverage = async (
   isIncluded: RemapFilter,
 ): Promise<number> => {
   if (!existsSync(rawDir)) return 0;
-  const { byUrl: transforms, pids } = readTransforms(rawDir);
-  if (transforms.size === 0) return 0;
-  const scripts = readRawProfiles(rawDir, pids).flat();
-  let merged = 0;
-  for (const [url, transform] of transforms) {
-    const prepared = await prepareScript(url, transform, isIncluded);
-    if (prepared === undefined) continue;
-    let contributed = false;
-    for (const script of scripts) {
-      if (script.url !== url) continue;
-      const data = await convertSnapshot(url, script.functions, prepared);
-      if (data === undefined) continue;
-      coverageMap.merge(data);
-      contributed = true;
+  const { byPid, fallback } = readTransforms(rawDir);
+  if (fallback.size === 0) return 0;
+  // The same record recurs — across profiles sharing a records map,
+  // and between a pid's map and the fallback — so parse each shape
+  // once. Istanbul merges by statement location, not index, so
+  // separate preparations of one URL coexist in the report.
+  const preparedByRecord = new Map<
+    TransformRecord,
+    PreparedScript | undefined
+  >();
+  const prepareOnce = async (
+    url: string,
+    record: TransformRecord,
+  ): Promise<PreparedScript | undefined> => {
+    // `has` rather than a `get` check: a failed preparation is stored
+    // as undefined and must not be retried.
+    if (preparedByRecord.has(record)) return preparedByRecord.get(record);
+    const prepared = await prepareScript(url, record, isIncluded);
+    preparedByRecord.set(record, prepared);
+    return prepared;
+  };
+  const merged = new Set<string>();
+  for (const profile of readRawProfiles(rawDir)) {
+    // Each profile converts against the records its own pid wrote; a
+    // pid that recorded none pairs with the shared fallback.
+    const records = byPid.get(profile.pid) ?? fallback;
+    for (const [url, record] of records) {
+      const prepared = await prepareOnce(url, record);
+      if (prepared === undefined) continue;
+      if (await mergeProfileSnapshots(coverageMap, url, prepared, profile))
+        merged.add(url);
     }
-    if (contributed) merged += 1;
   }
-  return merged;
+  return merged.size;
 };
 
 export type { MergeableCoverageMap, RemapFilter };

@@ -28,9 +28,7 @@
       "import": "./dist/subprocess-coverage/run-cli.js"
     }
   },
-  "files": [
-    "dist"
-  ],
+  "files": ["dist"],
   "packageManager": "pnpm@11.24.0",
   "engines": {
     "node": "==26"
